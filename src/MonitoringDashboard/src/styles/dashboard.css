@@ -349,3 +349,60 @@ button:focus,
 .spacer-12 {
     height: 12px
 }
+
+.settings-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px
+}
+
+.setting-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all .15s ease;
+}
+
+.setting-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.06)
+}
+
+.setting-item span {
+    color: #e6eef6
+}
+
+.setting-item input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+button {
+    padding: 8px 16px;
+    background: rgba(38, 208, 125, 0.15);
+    border: 1px solid rgba(38, 208, 125, 0.3);
+    border-radius: 8px;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all .15s ease;
+}
+
+button:hover {
+    background: rgba(38, 208, 125, 0.25);
+    border-color: rgba(38, 208, 125, 0.5);
+    box-shadow: 0 0 12px rgba(38, 208, 125, 0.15)
+}
+
+button:active {
+    background: rgba(38, 208, 125, 0.35);
+    transform: scale(0.98)
+}
