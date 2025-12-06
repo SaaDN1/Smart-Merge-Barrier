@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import '../styles/dashboard.css'
 
 export default function Settings() {
   const [autoRefresh, setAutoRefresh] = useState(true)

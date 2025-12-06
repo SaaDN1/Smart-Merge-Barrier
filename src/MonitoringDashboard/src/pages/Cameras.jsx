@@ -1,9 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import '../styles/dashboard.css'
-import Data from '../database.json'
 
 export default function Cameras() {
-  const [data] = useState(Data)
+  const [data, setData] = useState([])
+
+  useEffect(() => {
+    fetch('http://localhost:5000/api/db')
+      .then(res => res.json())
+      .then(setData)
+      .catch(console.error)
+  }, [])
 
   return (
     <div className="content">
