@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import '../styles/dashboard.css'
 import Cameras from './Cameras'
 import Settings from './Settings'
+import Footage from '../components/Footage'
 
 function SideBar({ activeTab, setActiveTab }) {
   const handleClick = (e, tab) => {
@@ -51,6 +52,7 @@ function Overview({ data }) {
 
   return (
     <main className="content">
+      <Footage/>
       <div className="grid">
         <div className="card">
           <div className="title">Total Cars</div>
