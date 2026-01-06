@@ -47,85 +47,91 @@ function SideBar({ activeTab, setActiveTab }) {
   )
 }
 
-function Overview({ data }) {
-  const totalCars = data.reduce((s, d) => s + (Number(d.carCount) || 0), 0)
+function Overview() {
+  const [detections, setDetections] = useState([])
+
+  const totalCars = detections.filter(d => d.class === 'car').length
+  const totalPersons = detections.filter(d => d.class === 'person').length
+  const totalBuses = detections.filter(d => d.class === 'bus').length
+
+  const cameraData = [{cameraID: 'Camera 1', mergeID: 'Merge 1', carCount: totalCars}]
 
   return (
     <main className="content">
-      <Footage/>
-      <div className="grid">
-        <div className="card">
-          <div className="title">Total Cars</div>
-          <div className="metric">
-            <div className="value">{totalCars}</div>
-            <div className="label">Across {data.length} cameras</div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="title">Active Cameras</div>
-          <div className="metric">
-            <div className="value">{data.length}</div>
-            <div className="label">Reporting</div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="title">Traffic Health</div>
-          <div className="status up"><span className="dot"></span><span className="small">All systems operational</span></div>
-        </div>
-
-        <div className="card full">
-          <div className="flex-between-baseline">
-            <div>
-              <div className="title">Camera table</div>
-              <div className="subtitle">Live feed of camera merge counts</div>
+      <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+        <Footage onDetections={setDetections} />
+        <div className="grid" style={{ flex: '0 0 400px', gridTemplateColumns: 'repeat(2, 1fr)' }}>
+          <div className="card">
+            <div className="title">Total Cars</div>
+            <div className="metric">
+              <div className="value">{totalCars}</div>
+              <div className="label">Detected in current frame</div>
             </div>
           </div>
 
-          <div className="spacer-12" />
+          <div className="card">
+            <div className="title">Total Persons</div>
+            <div className="metric">
+              <div className="value">{totalPersons}</div>
+              <div className="label">Detected in current frame</div>
+            </div>
+          </div>
 
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Camera ID</th>
-                <th>Merge ID</th>
-                <th>Car Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((d, i) => (
-                <tr key={i}>
-                  <td>{d.cameraID}</td>
-                  <td>{d.mergeID}</td>
-                  <td>{d.carCount}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="card">
+            <div className="title">Total Buses</div>
+            <div className="metric">
+              <div className="value">{totalBuses}</div>
+              <div className="label">Detected in current frame</div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="title">Traffic Health</div>
+            <div className="status up"><span className="dot"></span><span className="small">All systems operational</span></div>
+          </div>
         </div>
+      </div>
+
+      <div className="card full" style={{ marginTop: '20px' }}>
+        <div className="flex-between-baseline">
+          <div>
+            <div className="title">Camera table</div>
+            <div className="subtitle">Live feed of camera merge counts</div>
+          </div>
+        </div>
+
+        <div className="spacer-12" />
+
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Camera ID</th>
+              <th>Merge ID</th>
+              <th>Car Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cameraData.map((d, i) => (
+              <tr key={i}>
+                <td>{d.cameraID}</td>
+                <td>{d.mergeID}</td>
+                <td>{d.carCount}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </main>
   )
 }
 
 function Dashboard() {
-  const [data, setData] = useState([])
   const [activeTab, setActiveTab] = useState('Overview')
 
-  useEffect(() => {
-    fetch('http://localhost:5000/api/db')
-      .then(res => res.json())
-      .then(setData)
-      .catch(console.error)
-  }, [])
-
   const renderContent = () => {
-    if (!data) return <p>Loading...</p>
-
     switch (activeTab) {
       case 'Overview':
-        return <Overview data={data} />
+        return <Overview />
       case 'Cameras':
         return <Cameras />
       case 'Settings':

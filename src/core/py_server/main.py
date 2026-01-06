@@ -5,7 +5,7 @@ from PIL import Image
 from ultralytics import YOLO
 import numpy as np
 
-model = YOLO()
+model = YOLO('yolo11n.pt')
 
 class Base(BaseModel):
     data: list[int]
@@ -18,8 +18,20 @@ def to_image(list):
     return img
 
 def detect_cars(img):
-    prediction = model(img)
-    return prediction
+    results = model(img, verbose=False)
+    detections = []
+    for r in results:
+        for box in r.boxes:
+            cls = int(box.cls.item())
+            conf = float(box.conf.item())
+            xyxy = box.xyxy.tolist()[0]
+            class_name = model.names[cls]
+            detections.append({
+                "class": class_name,
+                "confidence": conf,
+                "bbox": xyxy
+            })
+    return detections
 
 
 app = FastAPI()
@@ -43,8 +55,7 @@ def main():
 @app.post("/")
 async def frame_sent(base: Base):
     img = to_image(base.data)
-    results = detect_cars(img)
-    for r in results:
-        print(len(r.boxes))
+    detections = detect_cars(img)
+    return {"detections": detections}
 
 
