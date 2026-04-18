@@ -406,3 +406,20 @@ button:active {
     background: rgba(38, 208, 125, 0.35);
     transform: scale(0.98)
 }
+
+.footage-wrap {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+}
+
+.footage-video {
+    display: block;
+}
+
+.footage-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+}

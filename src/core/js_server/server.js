@@ -1,11 +1,13 @@
 const express = require("express");
 const cors = require("cors");
-const { getCameraData } = require("../../mock/fake_db");
-const { runFakeAIDetection } = require("../../mock/fake_ai");
+const axios = require("axios");
+const { getCameraData, updateCarCount } = require("../../mock/fake_db");
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "100mb" }));
+
+const PYTHON_AI_URL = process.env.PYTHON_AI_URL || "http://127.0.0.1:8000/";
 
 // CONFIG
 // If total cars > TRAFFIC_THRESHOLD -> barrier closes automatically
@@ -55,6 +57,22 @@ function computeBarrierStatus() {
   };
 }
 
+async function runRealAIDetection(frameData, width, height) {
+  const response = await axios.post(
+    PYTHON_AI_URL,
+    {
+      data: frameData,
+      width,
+      height
+    },
+    {
+      timeout: 30000
+    }
+  );
+
+  return response.data;
+}
+
 app.get("/", (req, res) => {
   res.json({ status: "ok", service: "smart-merge-barrier-core" });
 });
@@ -66,13 +84,53 @@ app.get("/api/db", (req, res) => {
   res.json(data);
 });
 
-app.get("/api/ai", async (req, res) => {
+app.get("/api/ai/health", async (req, res) => {
   try {
-    const updated = await runFakeAIDetection();
-    res.json(updated);
+    const aiResponse = await axios.get(PYTHON_AI_URL, { timeout: 5000 });
+    res.json({
+      status: "ok",
+      pythonAi: aiResponse.data
+    });
   } catch (err) {
-    console.error("Error in /api/ai:", err);
-    res.status(500).json({ error: "AI simulation failed" });
+    console.error("Error in /api/ai/health:", err?.message || err);
+    res.status(503).json({
+      status: "error",
+      error: "Python AI server unreachable"
+    });
+  }
+});
+
+app.post("/api/ai", async (req, res) => {
+  try {
+    const { data, width, height } = req.body;
+
+    if (!Array.isArray(data) || !Number.isInteger(width) || !Number.isInteger(height)) {
+      return res.status(400).json({
+        error: "Request body must include data (array), width (int), and height (int)"
+      });
+    }
+
+    const aiResult = await runRealAIDetection(data, width, height);
+    const detections = Array.isArray(aiResult?.detections) ? aiResult.detections : [];
+    const carCount = detections.filter(item => item.class === "car").length;
+
+    const cameras = getCameraData();
+    if (cameras.length > 0) {
+      updateCarCount(cameras[0].cameraID, carCount);
+    }
+
+    res.json({
+      detections,
+      carCount,
+      source: "python-ai"
+    });
+  } catch (err) {
+    const upstreamError = err?.response?.data;
+    console.error("Error in /api/ai:", upstreamError || err?.message || err);
+    res.status(502).json({
+      error: "Real AI inference failed",
+      details: upstreamError || err?.message || "Unknown error"
+    });
   }
 });
 
