@@ -67,19 +67,17 @@ export default function Settings() {
     : 'Unknown'
 
   const trafficText = barrierStatus
-    ? `Total cars: ${barrierStatus.totalCars} / Threshold: ${barrierStatus.threshold}`
+    ? `Total cars: ${barrierStatus.totalCars} / Cars threshold: ${barrierStatus.thresholds?.cars ?? '-'} / Weighted threshold: ${barrierStatus.thresholds?.weighted ?? '-'}`
     : ''
 
   return (
     <div className="content">
+      <div className="page-header">
+        <h2 className="page-header-title">Settings</h2>
+        <p className="page-header-sub">Application preferences and barrier control</p>
+      </div>
+
       <div className="card full">
-        <div>
-          <div className="title">Settings</div>
-          <div className="subtitle">Application preferences & barrier control</div>
-        </div>
-
-        <div className="spacer-12" />
-
         <div className="settings-list">
           <label className="setting-item">
             <span>Auto-refresh barrier status</span>
@@ -102,23 +100,26 @@ export default function Settings() {
 
         <div className="spacer-12" />
 
-        <div className="card" style={{ marginTop: 12 }}>
+        <div className="barrier-section">
           <div className="flex-between-baseline">
-            <div className="title">Smart Merge Barrier</div>
-            {loading && <div className="small">Updating...</div>}
-            {error && <div className="small" style={{ color: 'red' }}>{error}</div>}
+            <p className="section-title-sm">Smart Merge Barrier</p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {loading && <span className="small muted">Updating…</span>}
+              {error && <span className="small" style={{ color: 'var(--danger)' }}>{error}</span>}
+            </div>
           </div>
-
-          <div className="spacer-12" />
 
           <div className="settings-list">
             <div className="setting-item">
               <span>Barrier status</span>
-              <span>{barrierStateText}</span>
+              <span style={{
+                color: barrierStatus?.state === 'OPEN' ? 'var(--accent)' : 'var(--danger)',
+                fontWeight: 600
+              }}>{barrierStateText}</span>
             </div>
             <div className="setting-item">
               <span>Traffic load</span>
-              <span>{trafficText}</span>
+              <span className="muted">{trafficText}</span>
             </div>
           </div>
 

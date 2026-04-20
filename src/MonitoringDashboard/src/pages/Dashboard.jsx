@@ -1,8 +1,106 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import '../styles/dashboard.css'
 import Cameras from './Cameras'
 import Settings from './Settings'
 import Footage from '../components/Footage'
+
+const HISTORY_LIMIT = 60
+const VEHICLE_CLASSES = ['car', 'bus', 'truck', 'motorcycle']
+const TRAFFIC_THRESHOLDS = {
+  light: 10,
+  moderate: 20
+}
+const BARRIER_RULES = {
+  cars: 15,
+  weighted: 18,
+  minFlowForOpen: 2
+}
+const TRACKER_MAX_DISTANCE = 80
+const TRACK_TTL_MS = 2200
+const FLOW_WINDOW_MS = 60000
+const FLOW_LINE_RATIO = 0.58
+const MOTION_WINDOW_MS = 10000
+const MOTION_THRESHOLDS = {
+  congested: 0.02,
+  quick: 0.06,
+  congestedFlowMax: 2,
+  denseTrafficTracksMin: 8,
+  crawlSpeedMax: 0.035
+}
+
+function classifyTraffic(totalVehicles, thresholds = TRAFFIC_THRESHOLDS) {
+  if (totalVehicles > thresholds.moderate) return 'Heavy'
+  if (totalVehicles > thresholds.light) return 'Moderate'
+  return 'Light'
+}
+
+function getMergeDecision({ cars, weightedTraffic, motionStatus, flowRate }) {
+  const notCongested = motionStatus !== 'Congested'
+  const hasGoodFlow = motionStatus === 'Quick Flow' || flowRate >= BARRIER_RULES.minFlowForOpen
+
+  if (notCongested && hasGoodFlow) {
+    return 'OPEN'
+  }
+
+  return motionStatus === 'Congested' || cars > BARRIER_RULES.cars || weightedTraffic > BARRIER_RULES.weighted
+    ? 'CLOSED'
+    : 'OPEN'
+}
+
+function classifyMotion(avgSpeedNorm, trackedVehicles, flowRate) {
+  if (trackedVehicles < 2) return 'Insufficient Data'
+
+  const nearStandstill = avgSpeedNorm <= MOTION_THRESHOLDS.congested
+  const denseSlowCrawl = trackedVehicles >= MOTION_THRESHOLDS.denseTrafficTracksMin
+    && flowRate <= MOTION_THRESHOLDS.congestedFlowMax
+    && avgSpeedNorm <= MOTION_THRESHOLDS.crawlSpeedMax
+
+  if (nearStandstill || denseSlowCrawl) return 'Congested'
+  if (avgSpeedNorm >= MOTION_THRESHOLDS.quick && flowRate > MOTION_THRESHOLDS.congestedFlowMax) return 'Quick Flow'
+  return 'Steady Flow'
+}
+
+function Sparkline({ data }) {
+  const canvasRef = useRef(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const w = canvas.clientWidth || 300
+    const h = 48
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = w * dpr
+    canvas.height = h * dpr
+
+    const ctx = canvas.getContext('2d')
+    ctx.scale(dpr, dpr)
+    ctx.clearRect(0, 0, w, h)
+
+    if (data.length < 2) return
+
+    const max = Math.max(...data, 1)
+    const step = w / (data.length - 1)
+    const pts = data.map((v, i) => ({ x: i * step, y: h - (v / max) * (h - 8) - 4 }))
+
+    ctx.beginPath()
+    pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
+    ctx.lineTo(pts[pts.length - 1].x, h)
+    ctx.lineTo(0, h)
+    ctx.closePath()
+    ctx.fillStyle = 'rgba(38, 208, 125, 0.10)'
+    ctx.fill()
+
+    ctx.beginPath()
+    pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
+    ctx.strokeStyle = '#26d07d'
+    ctx.lineWidth = 1.5
+    ctx.lineJoin = 'round'
+    ctx.stroke()
+  }, [data])
+
+  return <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '48px' }} />
+}
 
 function SideBar({ activeTab, setActiveTab }) {
   const handleClick = (e, tab) => {
@@ -16,7 +114,7 @@ function SideBar({ activeTab, setActiveTab }) {
         <div className="logo">VTM</div>
         <div>
           <h1 className="sidebar-title">Vehicle Traffic Monitoring</h1>
-          <p className="sidebar-sub" style={{marginBottom: 15}}>Live dashboard</p>
+          <p className="sidebar-sub" style={{ marginBottom: 15 }}>Live dashboard</p>
         </div>
       </div>
 
@@ -48,78 +146,334 @@ function SideBar({ activeTab, setActiveTab }) {
 }
 
 function Overview() {
-  const [detections, setDetections] = useState([])
+  const [framePayload, setFramePayload] = useState({ detections: [] })
+  const [cameraRows, setCameraRows] = useState([])
+  const historyRef = useRef([])
+  const flowEventsRef = useRef([])
+  const speedSamplesRef = useRef([])
+  const trackerRef = useRef({ nextId: 1, tracks: new Map() })
+  const [stats, setStats] = useState({
+    vehicles: 0,
+    cars: 0,
+    heavy: 0,
+    motos: 0,
+    weightedTraffic: 0,
+    trafficStatus: 'Light',
+    motionStatus: 'Insufficient Data',
+    avgSpeedNorm: 0,
+    flowRate: 0,
+    history: []
+  })
 
-  const totalCars = detections.filter(d => d.class === 'car').length
-  const totalPersons = detections.filter(d => d.class === 'person').length
-  const totalBuses = detections.filter(d => d.class === 'bus').length
+  useEffect(() => {
+    const fetchCameraRows = async () => {
+      try {
+        const response = await fetch('http://localhost:5000/api/db')
+        if (!response.ok) {
+          throw new Error(`Failed to fetch camera table: ${response.status}`)
+        }
 
-  const cameraData = [{cameraID: 'Camera 1', mergeID: 'Merge 1', carCount: totalCars}]
+        const payload = await response.json()
+        setCameraRows(Array.isArray(payload) ? payload : [])
+      } catch (error) {
+        console.error('Error loading camera table:', error)
+      }
+    }
+
+    fetchCameraRows()
+    const intervalId = setInterval(fetchCameraRows, 2000)
+    return () => clearInterval(intervalId)
+  }, [])
+
+  useEffect(() => {
+    const detections = Array.isArray(framePayload?.detections) ? framePayload.detections : []
+    const frameHeight = Number(framePayload?.frameHeight) || 0
+    const now = Number(framePayload?.timestamp) || Date.now()
+
+    const vehicles = detections.filter((d) => VEHICLE_CLASSES.includes(d.class)).length
+    const cars = detections.filter((d) => d.class === 'car').length
+    const heavy = detections.filter((d) => d.class === 'bus' || d.class === 'truck').length
+    const motos = detections.filter((d) => d.class === 'motorcycle').length
+
+    historyRef.current = [...historyRef.current, vehicles].slice(-HISTORY_LIMIT)
+    const window5 = historyRef.current.slice(-5)
+    const avgSmooth = Math.round(window5.reduce((sum, value) => sum + value, 0) / Math.max(window5.length, 1))
+
+    const lineY = frameHeight > 0 ? frameHeight * FLOW_LINE_RATIO : 400
+    const tracks = trackerRef.current.tracks
+    const usedTrackIds = new Set()
+
+    for (const [trackId, track] of tracks) {
+      if (now - track.lastSeenAt > TRACK_TTL_MS) {
+        tracks.delete(trackId)
+      }
+    }
+
+    const vehicleDetections = detections.filter((d) => VEHICLE_CLASSES.includes(d.class) && Array.isArray(d?.bbox) && d.bbox.length === 4)
+
+    vehicleDetections.forEach((det) => {
+      const [x1, y1, x2, y2] = det.bbox
+      const centroid = {
+        x: (x1 + x2) / 2,
+        y: (y1 + y2) / 2
+      }
+
+      let bestTrackId = null
+      let bestDistance = Infinity
+
+      for (const [trackId, track] of tracks) {
+        if (usedTrackIds.has(trackId)) continue
+        const distance = Math.hypot(centroid.x - track.x, centroid.y - track.y)
+        if (distance < TRACKER_MAX_DISTANCE && distance < bestDistance) {
+          bestDistance = distance
+          bestTrackId = trackId
+        }
+      }
+
+      const nextSide = centroid.y >= lineY ? 'below' : 'above'
+
+      if (bestTrackId === null) {
+        const newTrackId = trackerRef.current.nextId
+        trackerRef.current.nextId += 1
+        tracks.set(newTrackId, {
+          x: centroid.x,
+          y: centroid.y,
+          side: nextSide,
+          lastSeenAt: now
+        })
+        usedTrackIds.add(newTrackId)
+        return
+      }
+
+      const existing = tracks.get(bestTrackId)
+      if (existing) {
+        const dtSec = Math.max((now - existing.lastSeenAt) / 1000, 0.001)
+        const distancePx = Math.hypot(centroid.x - existing.x, centroid.y - existing.y)
+        const speedNorm = (distancePx / dtSec) / Math.max(frameHeight, 1)
+        speedSamplesRef.current.push({ ts: now, speedNorm })
+      }
+
+      if (existing && existing.side === 'above' && nextSide === 'below') {
+        flowEventsRef.current.push(now)
+      }
+
+      tracks.set(bestTrackId, {
+        x: centroid.x,
+        y: centroid.y,
+        side: nextSide,
+        lastSeenAt: now
+      })
+      usedTrackIds.add(bestTrackId)
+    })
+
+    flowEventsRef.current = flowEventsRef.current.filter((eventTs) => now - eventTs <= FLOW_WINDOW_MS)
+    const flowRate = flowEventsRef.current.length
+    speedSamplesRef.current = speedSamplesRef.current.filter((sample) => now - sample.ts <= MOTION_WINDOW_MS)
+    const avgSpeedNorm = speedSamplesRef.current.length > 0
+      ? speedSamplesRef.current.reduce((sum, sample) => sum + sample.speedNorm, 0) / speedSamplesRef.current.length
+      : 0
+    const motionStatus = classifyMotion(avgSpeedNorm, vehicleDetections.length, flowRate)
+
+    const weightedTraffic = Number((cars + heavy * 1.5 + motos * 0.5).toFixed(1))
+    const trafficStatus = classifyTraffic(avgSmooth)
+
+    setStats({
+      vehicles: avgSmooth,
+      cars,
+      heavy,
+      motos,
+      weightedTraffic,
+      trafficStatus,
+      motionStatus,
+      avgSpeedNorm,
+      flowRate,
+      history: [...historyRef.current]
+    })
+  }, [framePayload])
+
+  const { vehicles, cars, heavy, motos, weightedTraffic, trafficStatus, motionStatus, avgSpeedNorm, flowRate, history } = stats
+  const mergeDecision = getMergeDecision({ cars, weightedTraffic, motionStatus, flowRate })
+  const mergeOpen = mergeDecision === 'OPEN'
+
+  const trafficColor = trafficStatus === 'Heavy'
+    ? 'var(--danger)'
+    : trafficStatus === 'Moderate'
+      ? '#ffd166'
+      : 'var(--accent)'
+  const motionColor = motionStatus === 'Congested'
+    ? 'var(--danger)'
+    : motionStatus === 'Quick Flow'
+      ? 'var(--accent)'
+      : '#ffd166'
+
+  const cameraData = (cameraRows.length > 0 ? cameraRows : [
+    {
+      cameraID: 'Camera 1 — Main Street',
+      mergeID: 'Merge 1',
+      vehicles,
+      carCount: cars,
+      heavy,
+      motorcycles: motos,
+      trafficStatus
+    }
+  ]).map((cam) => {
+    const camCars = Number(cam.carCount) || 0
+    const camHeavy = Number(cam.heavy) || 0
+    const camMotos = Number(cam.motorcycles) || 0
+    const fallbackVehicles = camCars + camHeavy + camMotos
+    const camVehicles = Number.isFinite(Number(cam.vehicles)) ? Number(cam.vehicles) : fallbackVehicles
+    const camWeighted = Number.isFinite(Number(cam.weightedTraffic))
+      ? Number(cam.weightedTraffic)
+      : Number((camCars + camHeavy * 1.5 + camMotos * 0.5).toFixed(1))
+    const camTrafficStatus = cam.trafficStatus || classifyTraffic(camVehicles)
+
+    return {
+      cameraID: cam.cameraID || cam.id || 'Unknown Camera',
+      mergeID: cam.mergeID || cam.mergeId || 'Unknown Merge',
+      vehicles: camVehicles,
+      cars: camCars,
+      weightedTraffic: camWeighted,
+      motionStatus: cam.motionStatus || 'Insufficient Data',
+      flowRate: Number(cam.flowRate) || 0,
+      trafficStatus: camTrafficStatus,
+      mergeDecision: getMergeDecision({
+        cars: camCars,
+        weightedTraffic: camWeighted,
+        motionStatus: cam.motionStatus || 'Insufficient Data',
+        flowRate: Number(cam.flowRate) || 0
+      })
+    }
+  })
 
   return (
-    <main className="content">
-      <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
-        <Footage onDetections={setDetections} />
-        <div className="grid" style={{ flex: '0 0 400px', gridTemplateColumns: 'repeat(2, 1fr)' }}>
-          <div className="card">
-            <div className="title">Total Cars</div>
-            <div className="metric">
-              <div className="value">{totalCars}</div>
-              <div className="label">Detected in current frame</div>
-            </div>
-          </div>
+    <main className="content overview-content">
+      <div className="page-header">
+        <h2 className="page-header-title">
+          Overview
+          <span className="live-badge"><span className="live-badge-dot"></span>LIVE</span>
+        </h2>
+        <p className="page-header-sub">Adaptive detection loop with compressed frames for lower latency</p>
+      </div>
 
-          <div className="card">
-            <div className="title">Total Persons</div>
-            <div className="metric">
-              <div className="value">{totalPersons}</div>
-              <div className="label">Detected in current frame</div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="title">Total Buses</div>
-            <div className="metric">
-              <div className="value">{totalBuses}</div>
-              <div className="label">Detected in current frame</div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="title">Traffic Health</div>
-            <div className="status up"><span className="dot"></span><span className="small">All systems operational</span></div>
-          </div>
+      <div className={`merge-banner ${mergeOpen ? 'merge-open' : 'merge-closed'}`}>
+        <div className="merge-banner-indicator"></div>
+        <div className="merge-banner-body">
+          <span className="merge-banner-label">MERGE BARRIER</span>
+          <span className="merge-banner-state">{mergeDecision}</span>
+        </div>
+        <div className="merge-banner-reason">
+          Motion: {motionStatus} · Flow: {flowRate}/min · Cars: {cars}/{BARRIER_RULES.cars}
         </div>
       </div>
 
-      <div className="card full" style={{ marginTop: '20px' }}>
-        <div className="flex-between-baseline">
-          <div>
-            <div className="title">Camera table</div>
-            <div className="subtitle">Live feed of camera merge counts</div>
+      <div className="overview-layout">
+        <section className="overview-video-column">
+          <Footage onDetections={setFramePayload} />
+        </section>
+
+        <section className="overview-data-column">
+          <div className="overview-stats-grid">
+            <div className="card">
+              <div className="title">Total Vehicles</div>
+              <div className="metric">
+                <div className="value">{vehicles}</div>
+                <div className="label">5-frame rolling avg</div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="title">Traffic Level</div>
+              <div className="metric">
+                <div className="value" style={{ color: trafficColor }}>{trafficStatus}</div>
+                <div className="label">≤{TRAFFIC_THRESHOLDS.light} Light · ≤{TRAFFIC_THRESHOLDS.moderate} Moderate</div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="title">Cars</div>
+              <div className="metric">
+                <div className="value">{cars}</div>
+                <div className="label">Current frame</div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="title">Heavy Vehicles</div>
+              <div className="metric">
+                <div className="value">{heavy}</div>
+                <div className="label">Bus + Truck</div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="title">Motorcycles</div>
+              <div className="metric">
+                <div className="value">{motos}</div>
+                <div className="label">Current frame</div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="title">Flow Rate</div>
+              <div className="metric">
+                <div className="value">{flowRate}</div>
+                <div className="label">Tracked crossings / min</div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="title">Traffic Motion</div>
+              <div className="metric">
+                <div className="value" style={{ color: motionColor }}>{motionStatus}</div>
+                <div className="label">Avg speed {(avgSpeedNorm * 100).toFixed(1)}% frame/s</div>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div className="spacer-12" />
+          <div className="overview-bottom-grid">
+            <div className="card overview-history-card">
+              <div className="title">Vehicle History</div>
+              <div className="subtitle" style={{ marginBottom: 10 }}>
+                Last {history.length}s — vehicles per processed frame
+              </div>
+              <Sparkline data={history} />
+            </div>
 
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Camera ID</th>
-              <th>Merge ID</th>
-              <th>Car Count</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cameraData.map((d, i) => (
-              <tr key={i}>
-                <td>{d.cameraID}</td>
-                <td>{d.mergeID}</td>
-                <td>{d.carCount}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            <div className="card overview-table-card">
+              <div className="title">Camera Table</div>
+              <div className="subtitle">Backend-synced camera metrics</div>
+
+              <div className="spacer-12" />
+
+              <table className="table compact-table">
+                <thead>
+                  <tr>
+                    <th>Camera ID</th>
+                    <th>Merge ID</th>
+                    <th>Total Vehicles</th>
+                    <th>Traffic Status</th>
+                    <th>Merge Decision</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cameraData.map((d, i) => {
+                    const statusColor = d.trafficStatus === 'Heavy' ? 'var(--danger)' : d.trafficStatus === 'Moderate' ? '#ffd166' : 'var(--accent)'
+                    const decisionColor = d.mergeDecision === 'OPEN' ? 'var(--accent)' : 'var(--danger)'
+                    return (
+                      <tr key={`${d.cameraID}-${i}`}>
+                        <td>{d.cameraID}</td>
+                        <td>{d.mergeID}</td>
+                        <td>{d.vehicles}</td>
+                        <td><span style={{ color: statusColor, fontWeight: 600 }}>{d.trafficStatus}</span></td>
+                        <td><span style={{ color: decisionColor, fontWeight: 700 }}>{d.mergeDecision}</span></td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   )
@@ -151,4 +505,4 @@ function Dashboard() {
   )
 }
 
-export default Dashboard;
+export default Dashboard
