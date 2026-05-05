@@ -3,6 +3,7 @@ import '../styles/dashboard.css'
 import Cameras from './Cameras'
 import Settings from './Settings'
 import Footage from '../components/Footage'
+import { apiJson } from '../api.js'
 
 const HISTORY_LIMIT = 60
 const VEHICLE_CLASSES = ['car', 'bus', 'truck', 'motorcycle']
@@ -20,6 +21,7 @@ const TRACK_TTL_MS = 2200
 const FLOW_WINDOW_MS = 60000
 const FLOW_LINE_RATIO = 0.58
 const MOTION_WINDOW_MS = 10000
+const MOTION_RECENT_WINDOW_MS = 3000
 const MOTION_THRESHOLDS = {
   congested: 0.02,
   quick: 0.06,
@@ -47,16 +49,24 @@ function getMergeDecision({ cars, weightedTraffic, motionStatus, flowRate }) {
     : 'OPEN'
 }
 
-function classifyMotion(avgSpeedNorm, trackedVehicles, flowRate) {
+function classifyMotion(avgSpeedNorm, trackedVehicles, flowRate, recentAvgSpeedNorm = avgSpeedNorm) {
   if (trackedVehicles < 2) return 'Insufficient Data'
 
   const nearStandstill = avgSpeedNorm <= MOTION_THRESHOLDS.congested
+  const recentNearStandstill = recentAvgSpeedNorm <= (MOTION_THRESHOLDS.congested + 0.01)
+  const stalledFlow = trackedVehicles >= 3
+    && flowRate <= 1
+    && recentAvgSpeedNorm <= 0.045
   const denseSlowCrawl = trackedVehicles >= MOTION_THRESHOLDS.denseTrafficTracksMin
     && flowRate <= MOTION_THRESHOLDS.congestedFlowMax
-    && avgSpeedNorm <= MOTION_THRESHOLDS.crawlSpeedMax
+    && recentAvgSpeedNorm <= MOTION_THRESHOLDS.crawlSpeedMax
 
-  if (nearStandstill || denseSlowCrawl) return 'Congested'
-  if (avgSpeedNorm >= MOTION_THRESHOLDS.quick && flowRate > MOTION_THRESHOLDS.congestedFlowMax) return 'Quick Flow'
+  if (nearStandstill || recentNearStandstill || stalledFlow || denseSlowCrawl) return 'Congested'
+  if (
+    avgSpeedNorm >= MOTION_THRESHOLDS.quick
+    && recentAvgSpeedNorm >= MOTION_THRESHOLDS.quick * 0.85
+    && flowRate > MOTION_THRESHOLDS.congestedFlowMax
+  ) return 'Quick Flow'
   return 'Steady Flow'
 }
 
@@ -102,7 +112,7 @@ function Sparkline({ data }) {
   return <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '48px' }} />
 }
 
-function SideBar({ activeTab, setActiveTab }) {
+function SideBar({ activeTab, setActiveTab, user, onLogout }) {
   const handleClick = (e, tab) => {
     e.preventDefault()
     setActiveTab(tab)
@@ -141,6 +151,14 @@ function SideBar({ activeTab, setActiveTab }) {
       >
         <span className="dot"></span>Settings
       </a>
+
+      <div className="sidebar-session">
+        <div>
+          <div className="small muted">Signed in as</div>
+          <div className="sidebar-session-name">{user?.name || 'Operator'}</div>
+        </div>
+        <button type="button" className="button-secondary" onClick={onLogout}>Sign out</button>
+      </div>
     </aside>
   )
 }
@@ -148,6 +166,7 @@ function SideBar({ activeTab, setActiveTab }) {
 function Overview() {
   const [framePayload, setFramePayload] = useState({ detections: [] })
   const [cameraRows, setCameraRows] = useState([])
+  const [barrierStatus, setBarrierStatus] = useState(null)
   const historyRef = useRef([])
   const flowEventsRef = useRef([])
   const speedSamplesRef = useRef([])
@@ -161,6 +180,7 @@ function Overview() {
     trafficStatus: 'Light',
     motionStatus: 'Insufficient Data',
     avgSpeedNorm: 0,
+    recentAvgSpeedNorm: 0,
     flowRate: 0,
     history: []
   })
@@ -168,12 +188,7 @@ function Overview() {
   useEffect(() => {
     const fetchCameraRows = async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/db')
-        if (!response.ok) {
-          throw new Error(`Failed to fetch camera table: ${response.status}`)
-        }
-
-        const payload = await response.json()
+        const payload = await apiJson('/api/db')
         setCameraRows(Array.isArray(payload) ? payload : [])
       } catch (error) {
         console.error('Error loading camera table:', error)
@@ -186,7 +201,29 @@ function Overview() {
   }, [])
 
   useEffect(() => {
+    const fetchBarrierStatus = async () => {
+      try {
+        const payload = await apiJson('/api/barrier')
+        setBarrierStatus(payload)
+      } catch (error) {
+        console.error('Error loading barrier status:', error)
+      }
+    }
+
+    fetchBarrierStatus()
+    const intervalId = setInterval(fetchBarrierStatus, 5000)
+    return () => clearInterval(intervalId)
+  }, [])
+
+  useEffect(() => {
+    if (framePayload?.barrier) {
+      setBarrierStatus(framePayload.barrier)
+    }
+  }, [framePayload])
+
+  useEffect(() => {
     const detections = Array.isArray(framePayload?.detections) ? framePayload.detections : []
+    const backendSummary = framePayload?.vehicleSummary
     const frameHeight = Number(framePayload?.frameHeight) || 0
     const now = Number(framePayload?.timestamp) || Date.now()
 
@@ -267,32 +304,58 @@ function Overview() {
     })
 
     flowEventsRef.current = flowEventsRef.current.filter((eventTs) => now - eventTs <= FLOW_WINDOW_MS)
-    const flowRate = flowEventsRef.current.length
+    const localFlowRate = flowEventsRef.current.length
     speedSamplesRef.current = speedSamplesRef.current.filter((sample) => now - sample.ts <= MOTION_WINDOW_MS)
-    const avgSpeedNorm = speedSamplesRef.current.length > 0
+    const recentSpeedSamples = speedSamplesRef.current.filter((sample) => now - sample.ts <= MOTION_RECENT_WINDOW_MS)
+    const localAvgSpeedNorm = speedSamplesRef.current.length > 0
       ? speedSamplesRef.current.reduce((sum, sample) => sum + sample.speedNorm, 0) / speedSamplesRef.current.length
       : 0
-    const motionStatus = classifyMotion(avgSpeedNorm, vehicleDetections.length, flowRate)
+    const localRecentAvgSpeedNorm = recentSpeedSamples.length > 0
+      ? recentSpeedSamples.reduce((sum, sample) => sum + sample.speedNorm, 0) / recentSpeedSamples.length
+      : localAvgSpeedNorm
+    const localMotionStatus = classifyMotion(localAvgSpeedNorm, vehicleDetections.length, localFlowRate, localRecentAvgSpeedNorm)
 
-    const weightedTraffic = Number((cars + heavy * 1.5 + motos * 0.5).toFixed(1))
-    const trafficStatus = classifyTraffic(avgSmooth)
+    const flowRate = Number.isFinite(Number(backendSummary?.flowRate))
+      ? Number(backendSummary.flowRate)
+      : localFlowRate
+    const avgSpeedNorm = Number.isFinite(Number(backendSummary?.avgSpeedNorm))
+      ? Number(backendSummary.avgSpeedNorm)
+      : localAvgSpeedNorm
+    const recentAvgSpeedNorm = Number.isFinite(Number(backendSummary?.recentAvgSpeedNorm))
+      ? Number(backendSummary.recentAvgSpeedNorm)
+      : localRecentAvgSpeedNorm
+    const motionStatus = typeof backendSummary?.motionStatus === 'string' && backendSummary.motionStatus
+      ? backendSummary.motionStatus
+      : localMotionStatus
+
+    const weightedTraffic = Number.isFinite(Number(backendSummary?.weightedTraffic))
+      ? Number(backendSummary.weightedTraffic)
+      : Number((cars + heavy * 1.5 + motos * 0.5).toFixed(1))
+    const totalVehicles = Number.isFinite(Number(backendSummary?.totalVehicles))
+      ? Number(backendSummary.totalVehicles)
+      : avgSmooth
+    const trafficStatus = classifyTraffic(totalVehicles)
 
     setStats({
-      vehicles: avgSmooth,
-      cars,
-      heavy,
-      motos,
+      vehicles: totalVehicles,
+      cars: Number.isFinite(Number(backendSummary?.cars)) ? Number(backendSummary.cars) : cars,
+      heavy: Number.isFinite(Number(backendSummary?.buses)) && Number.isFinite(Number(backendSummary?.trucks))
+        ? Number(backendSummary.buses) + Number(backendSummary.trucks)
+        : heavy,
+      motos: Number.isFinite(Number(backendSummary?.motorcycles)) ? Number(backendSummary.motorcycles) : motos,
       weightedTraffic,
       trafficStatus,
       motionStatus,
       avgSpeedNorm,
+      recentAvgSpeedNorm,
       flowRate,
       history: [...historyRef.current]
     })
   }, [framePayload])
 
   const { vehicles, cars, heavy, motos, weightedTraffic, trafficStatus, motionStatus, avgSpeedNorm, flowRate, history } = stats
-  const mergeDecision = getMergeDecision({ cars, weightedTraffic, motionStatus, flowRate })
+  const autoMergeDecision = getMergeDecision({ cars, weightedTraffic, motionStatus, flowRate })
+  const mergeDecision = barrierStatus?.state || autoMergeDecision
   const mergeOpen = mergeDecision === 'OPEN'
 
   const trafficColor = trafficStatus === 'Heavy'
@@ -336,7 +399,7 @@ function Overview() {
       motionStatus: cam.motionStatus || 'Insufficient Data',
       flowRate: Number(cam.flowRate) || 0,
       trafficStatus: camTrafficStatus,
-      mergeDecision: getMergeDecision({
+      mergeDecision: barrierStatus?.state || getMergeDecision({
         cars: camCars,
         weightedTraffic: camWeighted,
         motionStatus: cam.motionStatus || 'Insufficient Data',
@@ -362,7 +425,7 @@ function Overview() {
           <span className="merge-banner-state">{mergeDecision}</span>
         </div>
         <div className="merge-banner-reason">
-          Motion: {motionStatus} · Flow: {flowRate}/min · Cars: {cars}/{BARRIER_RULES.cars}
+          Mode: {barrierStatus?.mode || 'AUTO'} · Motion: {motionStatus} · Flow: {flowRate}/min · Cars: {cars}/{BARRIER_RULES.cars}
         </div>
       </div>
 
@@ -479,7 +542,7 @@ function Overview() {
   )
 }
 
-function Dashboard() {
+function Dashboard({ user, onLogout }) {
   const [activeTab, setActiveTab] = useState('Overview')
 
   const renderContent = () => {
@@ -497,7 +560,7 @@ function Dashboard() {
 
   return (
     <div className="dashboard app" style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-      <SideBar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <SideBar activeTab={activeTab} setActiveTab={setActiveTab} user={user} onLogout={onLogout} />
       <div className="dashboard-content" style={{ flex: 1, minWidth: 0 }}>
         {renderContent()}
       </div>

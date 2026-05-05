@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import '../styles/dashboard.css'
+import { apiJson } from '../api.js'
 
 export default function Cameras() {
   const [data, setData] = useState([])
 
   useEffect(() => {
-    fetch('http://localhost:5000/api/db')
-      .then(res => res.json())
+    apiJson('/api/db')
       .then(setData)
       .catch(console.error)
   }, [])

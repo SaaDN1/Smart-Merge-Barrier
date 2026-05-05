@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { apiJson } from "../api.js";
+import defaultCameraFeedConfig from "../data/cameraFeeds.json";
 
-const BACKEND_AI_URL = "http://localhost:5000/api/ai";
-const BACKEND_CAMERAS_URL = "http://localhost:5000/api/cameras";
 const MIN_CAPTURE_INTERVAL_MS = 100;
 const UI_UPDATE_INTERVAL_MS = 200;
 const MAX_CAPTURE_WIDTH = 640;
@@ -11,21 +11,13 @@ const FAST_INFERENCE_MS = 220;
 const SLOW_INFERENCE_MS = 420;
 const JPEG_QUALITY = 0.5;
 const ZOOM_SCALE = 2;
-const DEFAULT_VIDEO_SRC = "/videos/5927708-hd_1080_1920_30fps.mp4";
-const DEFAULT_CAMERA_FEEDS = [
-    {
-        id: "camera-main",
-        label: "Main Street",
-        trafficLevel: "High",
-        src: DEFAULT_VIDEO_SRC
-    },
-    {
-        id: "camera-side-low-traffic",
-        label: "Side Street",
-        trafficLevel: "Low",
-        src: "/videos/low-traffic-street.mp4"
-    }
-];
+const DEFAULT_CAMERA_FEEDS = defaultCameraFeedConfig.map(({ id, label, trafficLevel, src }) => ({
+    id,
+    label,
+    trafficLevel,
+    src
+}));
+const DEFAULT_VIDEO_SRC = DEFAULT_CAMERA_FEEDS[0]?.src || "/videos/5927708-hd_1080_1920_30fps.mp4";
 const CLASS_COLORS = {
     car: "#39ff14",
     person: "#33b1ff",
@@ -62,11 +54,7 @@ function Footage({ onDetections }) {
 
         const fetchCameraFeeds = async () => {
             try {
-                const response = await fetch(BACKEND_CAMERAS_URL);
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch cameras: ${response.status}`);
-                }
-                const payload = await response.json();
+                const payload = await apiJson("/api/cameras");
                 const feeds = Array.isArray(payload) && payload.length > 0
                     ? payload.map((cam, index) => ({
                         id: cam.id || `camera-${index + 1}`,
@@ -299,7 +287,7 @@ function Footage({ onDetections }) {
             const inferenceStartedAt = performance.now();
 
             try {
-                const response = await fetch(BACKEND_AI_URL, {
+                const payload = await apiJson("/api/ai", {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json"
@@ -311,12 +299,6 @@ function Footage({ onDetections }) {
                         cameraId: currentCameraIdRef.current
                     })
                 });
-
-                if (!response.ok) {
-                    throw new Error(`AI request failed with status ${response.status}`);
-                }
-
-                const payload = await response.json();
                 const detections = Array.isArray(payload?.detections) ? payload.detections : [];
                 drawDetections(detections);
 
@@ -341,7 +323,8 @@ function Footage({ onDetections }) {
                         frameHeight: targetHeight,
                         timestamp: now,
                         cameraId: currentCameraIdRef.current,
-                        vehicleSummary: payload?.vehicleSummary || null
+                        vehicleSummary: payload?.vehicleSummary || null,
+                        barrier: payload?.barrier || null
                     });
                     lastUiUpdateRef.current = now;
                 }

@@ -1,0 +1,34 @@
+[
+  {
+    "id": "camera-main",
+    "label": "Main Street",
+    "cameraID": "Camera 1 - Main Street",
+    "mergeID": "Merge 1",
+    "trafficLevel": "High",
+    "src": "/videos/5927708-hd_1080_1920_30fps.mp4"
+  },
+  {
+    "id": "camera-side-low-traffic",
+    "label": "Side Street",
+    "cameraID": "Camera 2 - Side Street",
+    "mergeID": "Merge 2",
+    "trafficLevel": "Low",
+    "src": "/videos/low-traffic-street.mp4"
+  },
+  {
+    "id": "camera-heavy-vehicles",
+    "label": "Commercial Road",
+    "cameraID": "Camera 3 - Commercial Road",
+    "mergeID": "Merge 3",
+    "trafficLevel": "Heavy Vehicles",
+    "src": "/videos/heavy_traffic_realtime.mp4"
+  },
+  {
+    "id": "camera-empty-street",
+    "label": "Empty Street",
+    "cameraID": "Camera 4 - Empty Street",
+    "mergeID": "Merge 4",
+    "trafficLevel": "None",
+    "src": "/videos/empty_street_realtime.mp4"
+  }
+]

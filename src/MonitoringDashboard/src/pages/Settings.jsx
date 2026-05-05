@@ -1,56 +1,80 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import '../styles/dashboard.css'
+import { apiJson } from '../api.js'
+
+function formatAuditAction(entry) {
+  if (entry.action === 'SET_AUTO') return 'Set Auto'
+  if (entry.action === 'FORCE_OPEN') return 'Force Open'
+  if (entry.action === 'FORCE_CLOSED') return 'Force Closed'
+  return entry.action || 'Override'
+}
+
+function formatAuditTime(value) {
+  if (!value) return '-'
+
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
 
 export default function Settings() {
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [notifications, setNotifications] = useState(true)
 
   const [barrierStatus, setBarrierStatus] = useState(null)
+  const [overrideLog, setOverrideLog] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  const backendBaseUrl = 'http://localhost:5000'
+  const fetchOverrideLog = useCallback(async () => {
+    try {
+      const data = await apiJson('/api/barrier/override-log?limit=10')
+      setOverrideLog(Array.isArray(data?.entries) ? data.entries : [])
+    } catch (err) {
+      console.error('Failed to load override log:', err)
+    }
+  }, [])
 
-  const fetchBarrierStatus = () => {
+  const fetchBarrierStatus = useCallback(async () => {
     setLoading(true)
     setError(null)
 
-    fetch(`${backendBaseUrl}/api/barrier`)
-      .then(res => res.json())
-      .then(data => {
-        setBarrierStatus(data)
-        setLoading(false)
-      })
-      .catch(err => {
-        console.error(err)
-        setError('Failed to load barrier status')
-        setLoading(false)
-      })
-  }
+    try {
+      const data = await apiJson('/api/barrier')
+      setBarrierStatus(data)
+      await fetchOverrideLog()
+    } catch (err) {
+      console.error(err)
+      setError('Failed to load barrier status')
+    } finally {
+      setLoading(false)
+    }
+  }, [fetchOverrideLog])
 
-  const sendOverride = (mode, state) => {
+  const sendOverride = async (mode, state) => {
     setLoading(true)
     setError(null)
 
-    fetch(`${backendBaseUrl}/api/barrier/override`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, state })
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.error) {
-          setError(data.error)
-        } else if (data.barrier) {
-          setBarrierStatus(data.barrier)
-        }
-        setLoading(false)
+    try {
+      const data = await apiJson('/api/barrier/override', {
+        method: 'POST',
+        body: JSON.stringify({ mode, state })
       })
-      .catch(err => {
-        console.error(err)
-        setError('Failed to update barrier')
-        setLoading(false)
-      })
+
+      if (data.barrier) {
+        setBarrierStatus(data.barrier)
+      }
+
+      if (data.audit) {
+        setOverrideLog((entries) => [data.audit, ...entries].slice(0, 10))
+      } else {
+        await fetchOverrideLog()
+      }
+    } catch (err) {
+      console.error(err)
+      setError(err.message || 'Failed to update barrier')
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -60,7 +84,7 @@ export default function Settings() {
 
     const interval = setInterval(fetchBarrierStatus, 3000)
     return () => clearInterval(interval)
-  }, [autoRefresh])
+  }, [autoRefresh, fetchBarrierStatus])
 
   const barrierStateText = barrierStatus
     ? `${barrierStatus.state} (${barrierStatus.mode})`
@@ -138,6 +162,38 @@ export default function Settings() {
                 <button onClick={() => sendOverride('manual', 'CLOSED')}>Force CLOSED</button>
               </span>
             </span>
+          </div>
+
+          <div className="spacer-12" />
+
+          <div className="override-log-panel">
+            <p className="section-title-sm">Recent Override Log</p>
+            {overrideLog.length === 0 ? (
+              <div className="empty-state compact-empty">No override actions recorded yet.</div>
+            ) : (
+              <table className="table compact-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Operator</th>
+                    <th>Action</th>
+                    <th>Previous</th>
+                    <th>Next</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overrideLog.map((entry) => (
+                    <tr key={entry.id}>
+                      <td>{formatAuditTime(entry.timestamp)}</td>
+                      <td>{entry.operator || 'Operator'}</td>
+                      <td>{formatAuditAction(entry)}</td>
+                      <td>{entry.previous?.state || '-'} ({entry.previous?.mode || '-'})</td>
+                      <td>{entry.next?.state || '-'} ({entry.next?.mode || '-'})</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       </div>
