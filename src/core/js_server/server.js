@@ -410,6 +410,11 @@ function computeBarrierStatus() {
       state = "OPEN";
       mode = "AUTO";
       reason = "Good flow and no congestion";
+
+      // Arduino open
+      console.log("open")
+      let req = fetch("http://10.10.10.10/O") // Arduino server IP
+
     } else {
       // Automatic mode fallback: close on congestion or high load.
       const shouldClose = motionStatus === "Congested"
@@ -425,6 +430,12 @@ function computeBarrierStatus() {
         reason = "Weighted traffic above threshold";
       } else {
         reason = "Traffic below threshold";
+      }
+
+      // Arduino close
+      if (state == "CLOSED") {
+        console.log("close")
+        let req = fetch("http://10.10.10.10/C") // Arduino server IP
       }
     }
   }

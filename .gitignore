@@ -1,3 +1,7 @@
 __pycache__/
 venv/
+<<<<<<< HEAD
 src/core/js_server/logs/
+=======
+.idea/
+>>>>>>> b84aee1aa59ec1b3ba54d6b71637c026c64724e6
