@@ -15,103 +15,103 @@ import {
 } from "./api.js";
 
 function App() {
-  // const [auth, setAuth] = useState(() => loadStoredAuth());
-  // const [checkingSession, setCheckingSession] = useState(true);
+  const [auth, setAuth] = useState(() => loadStoredAuth());
+  const [checkingSession, setCheckingSession] = useState(true);
 
-  // useEffect(() => {
-  //   const handleAuthExpired = () => {
-  //     setAuth(null);
-  //   };
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      setAuth(null);
+    };
 
-  //   window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
-  //   return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
-  // }, []);
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+  }, []);
 
-  // useEffect(() => {
-  //   let isDisposed = false;
+  useEffect(() => {
+    let isDisposed = false;
 
-  //   const validateStoredSession = async () => {
-  //     const storedAuth = loadStoredAuth();
+    const validateStoredSession = async () => {
+      const storedAuth = loadStoredAuth();
 
-  //     if (!storedAuth?.token) {
-  //       if (!isDisposed) {
-  //         setAuth(null);
-  //         setCheckingSession(false);
-  //       }
-  //       return;
-  //     }
+      if (!storedAuth?.token) {
+        if (!isDisposed) {
+          setAuth(null);
+          setCheckingSession(false);
+        }
+        return;
+      }
 
-  //     try {
-  //       const session = await apiJson("/api/auth/me");
-  //       const nextAuth = {
-  //         ...storedAuth,
-  //         user: session.user,
-  //         expiresAt: session.expiresAt
-  //       };
-  //       saveStoredAuth(nextAuth);
-  //       if (!isDisposed) {
-  //         setAuth(nextAuth);
-  //       }
-  //     } catch (error) {
-  //       console.error("Stored session validation failed:", error);
-  //       clearStoredAuth();
-  //       if (!isDisposed) {
-  //         setAuth(null);
-  //       }
-  //     } finally {
-  //       if (!isDisposed) {
-  //         setCheckingSession(false);
-  //       }
-  //     }
-  //   };
+      try {
+        const session = await apiJson("/api/auth/me");
+        const nextAuth = {
+          ...storedAuth,
+          user: session.user,
+          expiresAt: session.expiresAt
+        };
+        saveStoredAuth(nextAuth);
+        if (!isDisposed) {
+          setAuth(nextAuth);
+        }
+      } catch (error) {
+        console.error("Stored session validation failed:", error);
+        clearStoredAuth();
+        if (!isDisposed) {
+          setAuth(null);
+        }
+      } finally {
+        if (!isDisposed) {
+          setCheckingSession(false);
+        }
+      }
+    };
 
-  //   validateStoredSession();
+    validateStoredSession();
 
-  //   return () => {
-  //     isDisposed = true;
-  //   };
-  // }, []);
+    return () => {
+      isDisposed = true;
+    };
+  }, []);
 
-  // const handleAuthenticated = (session) => {
-  //   const nextAuth = {
-  //     token: session.token,
-  //     user: session.user,
-  //     expiresAt: session.expiresAt
-  //   };
+  const handleAuthenticated = (session) => {
+    const nextAuth = {
+      token: session.token,
+      user: session.user,
+      expiresAt: session.expiresAt
+    };
 
-  //   saveStoredAuth(nextAuth);
-  //   setAuth(nextAuth);
-  // };
+    saveStoredAuth(nextAuth);
+    setAuth(nextAuth);
+  };
 
-  // const handleLogout = async () => {
-  //   try {
-  //     await apiJson("/api/auth/logout", { method: "POST" });
-  //   } catch (error) {
-  //     console.error("Logout request failed:", error);
-  //   } finally {
-  //     clearStoredAuth();
-  //     setAuth(null);
-  //   }
-  // };
+  const handleLogout = async () => {
+    try {
+      await apiJson("/api/auth/logout", { method: "POST" });
+    } catch (error) {
+      console.error("Logout request failed:", error);
+    } finally {
+      clearStoredAuth();
+      setAuth(null);
+    }
+  };
 
-  // if (checkingSession) {
-  //   return (
-  //     <main className="auth-shell">
-  //       <section className="auth-panel">
-  //         <div className="small muted">Checking session...</div>
-  //       </section>
-  //     </main>
-  //   );
-  // }
+  if (checkingSession) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-panel">
+          <div className="small muted">Checking session...</div>
+        </section>
+      </main>
+    );
+  }
 
-  // if (!auth?.token) {
-  //   return (
-  //     <>
-  //       <Login onAuthenticated={handleAuthenticated} />
-  //       <ToastContainer />
-  //     </>
-  //   );
-  // }
+  if (!auth?.token) {
+    return (
+      <>
+        <Login onAuthenticated={handleAuthenticated} />
+        <ToastContainer />
+      </>
+    );
+  }
 
   return (
     <Router>

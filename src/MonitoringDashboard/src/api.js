@@ -35,7 +35,7 @@ export function clearStoredAuth() {
 }
 
 export async function apiFetch(path, options = {}) {
-  const { skipAuth = true, ...fetchOptions } = options;
+  const { skipAuth = false, ...fetchOptions } = options;
   const headers = new Headers(fetchOptions.headers || {});
   const hasFormBody = typeof FormData !== "undefined" && fetchOptions.body instanceof FormData;
 
