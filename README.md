@@ -22,9 +22,9 @@ Server runs at:
 http://localhost:5000
 
 
-Test endpoint:
+Health endpoint:
 
-http://localhost:5000/api/db
+http://localhost:5000/
 
 🖥️ Running the Monitoring Dashboard
 
@@ -41,3 +41,9 @@ http://localhost:5173
 
 
 The dashboard will automatically fetch data from the backend.
+
+Authentication:
+
+- Default operator password: `smartmerge2026`
+- Override it before starting the backend with `ADMIN_PASSWORD=your-password`.
+- Barrier override actions are written to `src/core/js_server/logs/barrier-overrides.jsonl` and shown in Settings.
