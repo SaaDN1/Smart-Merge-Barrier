@@ -410,10 +410,7 @@ function computeBarrierStatus() {
       state = "OPEN";
       mode = "AUTO";
       reason = "Good flow and no congestion";
-
-      // Arduino open
-      console.log("open")
-      let req = fetch("http://10.10.10.10/O") // Arduino server IP
+      
 
     } else {
       // Automatic mode fallback: close on congestion or high load.
@@ -432,11 +429,7 @@ function computeBarrierStatus() {
         reason = "Traffic below threshold";
       }
 
-      // Arduino close
-      if (state == "CLOSED") {
-        console.log("close")
-        let req = fetch("http://10.10.10.10/C") // Arduino server IP
-      }
+      
     }
   }
 
@@ -637,6 +630,13 @@ app.post("/api/ai", async (req, res) => {
 // Get current barrier status
 app.get("/api/barrier", (req, res) => {
   const status = computeBarrierStatus();
+  // Arduino close and open
+  // if (status.state == "CLOSED") {
+  //   fetch("http://192.168.50.116/C") // Arduino server IP
+  // }
+  // else {
+  //   fetch("http://192.168.50.116/O")
+  // }
   res.json(status);
 });
 
