@@ -30,5 +30,61 @@
     "mergeID": "Merge 4",
     "trafficLevel": "None",
     "src": "/videos/empty_street_realtime.mp4"
+  },
+  {
+    "id": "camera-mainroad-1",
+    "label": "Mainroad 1",
+    "cameraID": "Camera 5 - Mainroad 1",
+    "mergeID": "Merge 5",
+    "trafficLevel": "Medium 1",
+    "src": "/videos/31784-388997493_medium.mp4"
+  },
+  {
+    "id": "camera-mainroad-3",
+    "label": "Mainroad 3",
+    "cameraID": "Camera 7 - Mainroad 3",
+    "mergeID": "Merge 7",
+    "trafficLevel": "Medium 3",
+    "src": "/videos/13488560_2160_3840_19fps.mp4"
+  },
+  {
+    "id": "camera-mainroad-4",
+    "label": "Mainroad 4",
+    "cameraID": "Camera 8 - Mainroad 4",
+    "mergeID": "Merge 8",
+    "trafficLevel": "Medium 4",
+    "src": "/videos/13538225_2160_3840_30fps.mp4"
+  },
+  {
+    "id": "camera-mainroad-6",
+    "label": "Mainroad 6",
+    "cameraID": "Camera 10 - Mainroad 6",
+    "mergeID": "Merge 10",
+    "trafficLevel": "Medium 6",
+    "src": "/videos/14867812_1080_1920_60fps.mp4"
+  },
+  {
+    "id": "camera-mainroad-7",
+    "label": "Mainroad 7",
+    "cameraID": "Camera 11 - Mainroad 7",
+    "mergeID": "Merge 11",
+    "trafficLevel": "Medium 7",
+    "src": "/videos/15042568_2160_3840_30fps.mp4"
+  },
+  {
+    "id": "camera-mainroad-8",
+    "label": "Mainroad 8",
+    "cameraID": "Camera 12 - Mainroad 8",
+    "mergeID": "Merge 12",
+    "trafficLevel": "Medium 8",
+    "src": "/videos/15195617_1440_2560_30fps.mp4"
+  },
+  {
+    "id": "camera-mainroad-9",
+    "label": "Mainroad 9",
+    "cameraID": "Camera 13 - Mainroad 9",
+    "mergeID": "Merge 13",
+    "trafficLevel": "Medium 9",
+    "src": "/videos/Cars.mp4"
   }
 ]
