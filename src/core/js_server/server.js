@@ -29,6 +29,11 @@ const CAR_CLOSE_THRESHOLD = Number(process.env.CAR_CLOSE_THRESHOLD || 15);
 const WEIGHTED_CLOSE_THRESHOLD = Number(process.env.WEIGHTED_CLOSE_THRESHOLD || 18);
 const FLOW_GOOD_MIN_PER_MIN = Number(process.env.FLOW_GOOD_MIN_PER_MIN || 2);
 
+// Minimum hold time constants (in milliseconds)
+const BARRIER_MIN_HOLD_MS = Number(process.env.BARRIER_MIN_HOLD_MS || 30000); // 30 seconds
+const OPEN_CONFIRM_MS = Number(process.env.OPEN_CONFIRM_MS || 5000); // 5 seconds
+const CLOSE_CONFIRM_MS = Number(process.env.CLOSE_CONFIRM_MS || 5000); // 5 seconds
+
 const VEHICLE_CLASSES = new Set(["car", "bus", "truck", "motorcycle"]);
 const TRACKER_MAX_DISTANCE = Number(process.env.TRACKER_MAX_DISTANCE || 80);
 const TRACK_TTL_MS = Number(process.env.TRACK_TTL_MS || 2200);
@@ -46,12 +51,126 @@ const DEFAULT_CAMERA_STREAMS = (Array.isArray(getCameraData()) ? getCameraData()
   .map((cam) => cam.streamUrl || cam.streamURL)
   .filter(Boolean);
 
+const DEFAULT_TRAFFIC_SNAPSHOT = {
+  cars: 0,
+  buses: 0,
+  trucks: 0,
+  motorcycles: 0,
+  weightedTraffic: 0,
+  totalVehicles: 0,
+  flowRate: 0,
+  motionStatus: "Insufficient Data",
+  avgSpeedNorm: 0,
+  recentAvgSpeedNorm: 0,
+  updatedAt: null
+};
+
+function resetBarrierState() {
+  latestTrafficSnapshot = { ...DEFAULT_TRAFFIC_SNAPSHOT };
+  pendingBarrierState = null;
+  pendingBarrierSince = null;
+  barrierLastChanged = Date.now();
+  lastBarrierState = "UNKNOWN";
+}
+
 // BARRIER STATE (in-memory)
 // overrideMode: false => automatic mode
 // overrideMode: true  => use overrideState instead of auto logic
 let overrideMode = false;
 let overrideState = null;
 let overrideAuditLog = [];
+let barrierLastChanged = Date.now(); // Initialize to current time
+let pendingBarrierState = null;
+let pendingBarrierSince = null;
+let lastBarrierState = "UNKNOWN"; // Add missing variable declaration
+let lastActiveCameraId = null;
+
+// Camera-specific states
+const cameraStates = new Map();
+
+// Function to update a camera's merge decision when switching to it
+function updateCameraMergeDecision(cameraId, decision) {
+  let cameraState = cameraStates.get(cameraId);
+
+  // Initialize camera state if it doesn't exist
+  if (!cameraState) {
+    cameraState = {
+      mergeDecision: "UNKNOWN",
+      lastUpdated: null,
+      initializationTime: null
+    };
+  }
+
+  // Handle the state transition logic properly
+  if (decision === "INITIALIZING") {
+    cameraState.mergeDecision = "INITIALIZING";
+    cameraState.initializationTime = Date.now();
+  } else if (decision === "OPEN" || decision === "CLOSED") {
+    // Only update to OPEN/CLOSED if we're in INITIALIZING or UNKNOWN state
+    if (cameraState.mergeDecision === "UNKNOWN" || cameraState.mergeDecision === "INITIALIZING") {
+      cameraState.mergeDecision = decision;
+      cameraState.initializationTime = null; // Clear initialization time when finalizing
+    }
+  } else if (decision === "UNKNOWN") {
+    // Reset the camera's merge decision to UNKNOWN
+    cameraState.mergeDecision = "UNKNOWN";
+    cameraState.initializationTime = null;
+  }
+
+  cameraState.lastUpdated = new Date().toISOString();
+  cameraStates.set(cameraId, cameraState);
+}
+
+// Function to clear initialization state after timeout for a specific camera
+function clearCameraInitialization(cameraId) {
+  const cameraState = cameraStates.get(cameraId);
+  if (cameraState && cameraState.mergeDecision === "INITIALIZING" && cameraState.initializationTime) {
+    const elapsedTime = Date.now() - cameraState.initializationTime;
+    if (elapsedTime >= 3000) {
+      cameraState.mergeDecision = "UNKNOWN";
+      cameraState.initializationTime = null;
+    }
+  }
+}
+
+// Function to get a camera's current merge decision with initialization logic
+function getCameraMergeDecision(cameraId) {
+  const cameraState = cameraStates.get(cameraId);
+  if (!cameraState) {
+    return "UNKNOWN";
+  }
+
+  // If in INITIALIZING state, check if initialization period has passed (3 seconds)
+  if (cameraState.mergeDecision === "INITIALIZING" && cameraState.initializationTime) {
+    const elapsedTime = Date.now() - cameraState.initializationTime;
+    if (elapsedTime >= 3000) {
+      // Initialization complete, transition to UNKNOWN state to allow normal operation
+      cameraState.mergeDecision = "UNKNOWN";
+      cameraState.initializationTime = null;
+    }
+  }
+
+  return cameraState.mergeDecision;
+}
+
+// Function to get current camera merge decision for API endpoint
+app.get("/api/camera/merge-decision/:cameraId", (req, res) => {
+  const { cameraId } = req.params;
+  if (!cameraId) {
+    return res.status(400).json({ error: "Camera ID is required" });
+  }
+
+  const decision = getCameraMergeDecision(cameraId);
+  if (decision === "UNKNOWN") {
+    resetBarrierState();
+  }
+  updateCameraMergeDecision(cameraId, decision);
+
+  res.json({
+    cameraId,
+    mergeDecision: decision
+  });
+});
 
 let latestTrafficSnapshot = {
   cars: 0,
@@ -259,21 +378,30 @@ function classifyTrafficLevel(totalVehicles) {
 function classifyMotion(avgSpeedNorm, trackedVehicles, flowRate, recentAvgSpeedNorm = avgSpeedNorm) {
   if (trackedVehicles < 2) return "Insufficient Data";
 
+  // More relaxed thresholds to prevent false positives
   const nearStandstill = avgSpeedNorm <= MOTION_CONGESTED_THRESHOLD;
   const recentNearStandstill = recentAvgSpeedNorm <= (MOTION_CONGESTED_THRESHOLD + 0.01);
+
+  // Check for stalled flow with more realistic conditions
   const stalledFlow = trackedVehicles >= 3
     && flowRate <= 1
     && recentAvgSpeedNorm <= 0.045;
+
+  // Check for dense slow crawl with better thresholds
   const denseSlowCrawl = trackedVehicles >= DENSE_TRAFFIC_TRACKS_MIN
     && flowRate <= CONGESTED_FLOW_MAX_PER_MIN
     && recentAvgSpeedNorm <= CRAWL_SPEED_MAX;
 
   if (nearStandstill || recentNearStandstill || stalledFlow || denseSlowCrawl) return "Congested";
-  if (
-    avgSpeedNorm >= MOTION_QUICK_THRESHOLD
+
+  // Quick flow detection - need better conditions to avoid false positives
+  const isQuickFlow = avgSpeedNorm >= MOTION_QUICK_THRESHOLD
     && recentAvgSpeedNorm >= MOTION_QUICK_THRESHOLD * 0.85
-    && flowRate > CONGESTED_FLOW_MAX_PER_MIN
-  ) return "Quick Flow";
+    && flowRate > CONGESTED_FLOW_MAX_PER_MIN;
+
+  if (isQuickFlow) return "Quick Flow";
+
+  // Default to steady flow for normal conditions
   return "Steady Flow";
 }
 
@@ -334,7 +462,8 @@ function updateMotionMetrics(cameraKey, detections, frameHeight, now) {
         x: centroid.x,
         y: centroid.y,
         side: nextSide,
-        lastSeenAt: now
+        lastSeenAt: now,
+        seenCount: 1
       });
       usedTrackIds.add(newTrackId);
       return;
@@ -344,8 +473,14 @@ function updateMotionMetrics(cameraKey, detections, frameHeight, now) {
     if (existing) {
       const dtSec = Math.max((now - existing.lastSeenAt) / 1000, 0.001);
       const distancePx = Math.hypot(centroid.x - existing.x, centroid.y - existing.y);
-      const speedNorm = (distancePx / dtSec) / Math.max(frameHeight, 1);
-      state.speedSamples.push({ ts: now, speedNorm });
+
+      if (existing.seenCount >= 2 && dtSec >= 0.25) {
+        const speedNorm = Math.min(
+          (distancePx / dtSec) / Math.max(frameHeight, 1),
+          0.35
+        );
+        state.speedSamples.push({ ts: now, speedNorm });
+      }
     }
 
     if (existing && existing.side === "above" && nextSide === "below") {
@@ -356,7 +491,8 @@ function updateMotionMetrics(cameraKey, detections, frameHeight, now) {
       x: centroid.x,
       y: centroid.y,
       side: nextSide,
-      lastSeenAt: now
+      lastSeenAt: now,
+      seenCount: (existing?.seenCount || 1) + 1
     });
     usedTrackIds.add(bestTrackId);
   });
@@ -403,38 +539,88 @@ function computeBarrierStatus() {
   } else {
     const motionStatus = latestTrafficSnapshot.motionStatus;
     const flowRate = Number(latestTrafficSnapshot.flowRate) || 0;
-    const notCongested = motionStatus !== "Congested";
-    const hasGoodFlow = motionStatus === "Quick Flow" || flowRate >= FLOW_GOOD_MIN_PER_MIN;
+    const noReliableData = motionStatus === "Insufficient Data" || totalCars === 0;
 
-    if (notCongested && hasGoodFlow) {
+    if (noReliableData) {
       state = "OPEN";
       mode = "AUTO";
-      reason = "Good flow and no congestion";
-      
-
+      reason = "Insufficient data / empty street";
     } else {
-      // Automatic mode fallback: close on congestion or high load.
-      const shouldClose = motionStatus === "Congested"
-        || totalCars > CAR_CLOSE_THRESHOLD
-        || weightedTraffic > WEIGHTED_CLOSE_THRESHOLD;
-      state = shouldClose ? "CLOSED" : "OPEN";
-      mode = "AUTO";
-      if (motionStatus === "Congested") {
-        reason = "Congested traffic detected";
-      } else if (totalCars > CAR_CLOSE_THRESHOLD) {
-        reason = "Cars above threshold";
-      } else if (weightedTraffic > WEIGHTED_CLOSE_THRESHOLD) {
-        reason = "Weighted traffic above threshold";
+      const notCongested = motionStatus !== "Congested";
+      const hasGoodFlow = motionStatus === "Quick Flow" || flowRate >= FLOW_GOOD_MIN_PER_MIN;
+
+      let desiredState;
+      if (notCongested && hasGoodFlow) {
+        desiredState = "OPEN";
+        reason = "Good flow and no congestion";
       } else {
-        reason = "Traffic below threshold";
+        // Automatic mode fallback: close on congestion or high load.
+        const shouldClose =
+          motionStatus === "Congested" ||
+          totalCars > CAR_CLOSE_THRESHOLD ||
+          weightedTraffic > WEIGHTED_CLOSE_THRESHOLD;
+
+        desiredState = shouldClose ? "CLOSED" : "OPEN";
+
+        if (motionStatus === "Congested") {
+          reason = "Congested traffic detected";
+        } else if (totalCars > CAR_CLOSE_THRESHOLD) {
+          reason = "Cars above threshold";
+        } else if (weightedTraffic > WEIGHTED_CLOSE_THRESHOLD) {
+          reason = "Weighted traffic above threshold";
+        } else {
+          reason = "Traffic below threshold";
+        }
       }
 
-      
+      const now = Date.now();
+
+      if (lastBarrierState === "UNKNOWN") {
+        state = desiredState;
+        barrierLastChanged = now;
+        pendingBarrierState = null;
+        pendingBarrierSince = null;
+      } else {
+      const confirmMs = pendingBarrierState === "OPEN" ? OPEN_CONFIRM_MS : CLOSE_CONFIRM_MS;
+      const holdExpired = pendingBarrierSince !== null && (now - pendingBarrierSince >= confirmMs);
+
+        if (pendingBarrierState !== null && holdExpired) {
+          if (desiredState === pendingBarrierState) {
+            state = desiredState;
+            barrierLastChanged = now;
+            pendingBarrierState = null;
+            pendingBarrierSince = null;
+          } else {
+            pendingBarrierState = null;
+            pendingBarrierSince = null;
+            state = lastBarrierState;
+          }
+        } else if (pendingBarrierState === null) {
+          if (desiredState !== lastBarrierState) {
+            pendingBarrierState = desiredState;
+            pendingBarrierSince = now;
+          }
+          state = lastBarrierState;
+        } else {
+          state = lastBarrierState;
+        }
+
+        if (pendingBarrierState === null && desiredState === lastBarrierState) {
+          state = desiredState;
+        }
+      }
+
+      mode = "AUTO";
     }
   }
 
+  // Update last barrier state if changed
+  if (state !== lastBarrierState) {
+    lastBarrierState = state;
+  }
+
   return {
-    state,              // "OPEN" or "CLOSED"
+    state,              // "OPEN" or "CLOSED" or "INITIALIZING"
     mode,               // "AUTO" or "MANUAL"
     totalCars,
     thresholds: {
@@ -505,14 +691,36 @@ app.get("/api/db", (req, res) => {
   const barrier = computeBarrierStatus();
 
   const payload = data.map((cam, index) => {
-    const isPrimaryCamera = index === 0;
-    const cars = isPrimaryCamera ? latestTrafficSnapshot.cars : cam.carCount;
-    const heavy = isPrimaryCamera ? latestTrafficSnapshot.buses + latestTrafficSnapshot.trucks : 0;
-    const motorcycles = isPrimaryCamera ? latestTrafficSnapshot.motorcycles : 0;
-    const totalVehicles = isPrimaryCamera
-      ? latestTrafficSnapshot.totalVehicles
-      : cars + heavy + motorcycles;
+    // Each camera should have its own merge decision that persists independently
+    // For each camera, we should determine its own merge decision based on its own data
+    
+    const cameraState = cameraStates.get(cam.cameraID) || {
+      mergeDecision: "UNKNOWN",
+      lastUpdated: null
+    };
+
+    // Use the global barrier state to influence individual camera decisions
+    // but maintain separate states for each camera
+    const cars = cam.carCount || 0;
+    const heavy = cam.buses + cam.trucks || 0;
+    const motorcycles = cam.motorcycles || 0;
+    const totalVehicles = cars + heavy + motorcycles;
     const weightedTraffic = cars + heavy * 1.5 + motorcycles * 0.5;
+
+    // Determine merge decision based on camera-specific data
+    let mergeDecision = cameraState.mergeDecision;
+    
+    // If we're in an initializing state, keep it as such for now
+    if (cameraState.mergeDecision === "INITIALIZING") {
+      // We don't want to override an initialization state with automatic decisions yet
+    } else if (cameraState.mergeDecision === "UNKNOWN") {
+      // For UNKNOWN state, we can set it based on the global barrier status
+      // but in a real system this would be more complex and camera-specific
+      mergeDecision = "UNKNOWN";
+    } else {
+      // Keep the existing decision for OPEN/CLOSED states
+      mergeDecision = cameraState.mergeDecision;
+    }
 
     return {
       cameraID: cam.cameraID,
@@ -525,7 +733,8 @@ app.get("/api/db", (req, res) => {
       flowRate: latestTrafficSnapshot.flowRate,
       motionStatus: latestTrafficSnapshot.motionStatus,
       trafficStatus: classifyTrafficLevel(totalVehicles),
-      mergeDecision: barrier.state,
+      mergeDecision: mergeDecision,
+      lastUpdated: cameraState.lastUpdated,
       streamUrl: cam.streamUrl,
       streamPath: cam.streamPath
     };
@@ -587,8 +796,18 @@ app.post("/api/ai", async (req, res) => {
     const motorcycleCount = detections.filter(item => item.class === "motorcycle").length;
     const totalVehicles = carCount + busCount + truckCount + motorcycleCount;
     const now = Date.now();
-    const cameraKey = typeof cameraId === "string" && cameraId.trim() ? cameraId.trim() : "camera-main";
+const cameraKey = typeof cameraId === "string" && cameraId.trim() ? cameraId.trim() : "camera-main";
+
+    if (cameraKey !== lastActiveCameraId) {
+        lastActiveCameraId = cameraKey;
+        resetBarrierState();
+        cameraMotionState.delete(cameraKey);
+    }
+
     const motion = updateMotionMetrics(cameraKey, detections, Number(height) || 1, now);
+
+    // Calculate flow rate properly based on actual vehicle detection events
+    const flowRate = motion.flowRate;
 
     latestTrafficSnapshot = {
       cars: carCount,
@@ -597,26 +816,36 @@ app.post("/api/ai", async (req, res) => {
       motorcycles: motorcycleCount,
       weightedTraffic: carCount + (busCount + truckCount) * 1.5 + motorcycleCount * 0.5,
       totalVehicles,
-      flowRate: motion.flowRate,
+      flowRate,
       motionStatus: motion.motionStatus,
       avgSpeedNorm: Number(motion.avgSpeedNorm.toFixed(4)),
       recentAvgSpeedNorm: Number(motion.recentAvgSpeedNorm.toFixed(4)),
       updatedAt: new Date().toISOString()
     };
 
-    const cameras = normalizeCameraRows();
+const cameras = normalizeCameraRows();
+    let selectedCamera = null;
     if (cameras.length > 0) {
-      const selectedCamera = cameras.find((cam) => cam.id === cameraId || cam.cameraID === cameraId) || cameras[0];
+      selectedCamera = cameras.find((cam) => cam.id === cameraId || cam.cameraID === cameraId) || cameras[0];
       updateCarCount(selectedCamera.cameraID, carCount);
     }
 
+    const barrierResult = computeBarrierStatus();
+
+    if (selectedCamera && (barrierResult.state === "OPEN" || barrierResult.state === "CLOSED")) {
+      const camState = cameraStates.get(selectedCamera.cameraID) || { mergeDecision: "UNKNOWN", lastUpdated: null, initializationTime: null };
+      camState.mergeDecision = barrierResult.state;
+      camState.lastUpdated = new Date().toISOString();
+      cameraStates.set(selectedCamera.cameraID, camState);
+    }
+
     res.json({
-      detections,
-      carCount,
-      vehicleSummary: latestTrafficSnapshot,
-      barrier: computeBarrierStatus(),
-      source: "python-ai"
-    });
+       detections,
+       carCount,
+       vehicleSummary: latestTrafficSnapshot,
+       barrier: barrierResult,
+       source: "python-ai"
+     });
   } catch (err) {
     const upstreamError = err?.response?.data;
     console.error("Error in /api/ai:", upstreamError || err?.message || err);
@@ -638,6 +867,20 @@ app.get("/api/barrier", (req, res) => {
   //   fetch("http://192.168.50.116/O")
   // }
   res.json(status);
+});
+
+// Endpoint to update camera merge decision when switching to it
+app.post("/api/camera/merge-decision", (req, res) => {
+  const { cameraId, decision } = req.body || {};
+
+  if (!cameraId || (decision !== "OPEN" && decision !== "CLOSED" && decision !== "UNKNOWN")) {
+    return res.status(400).json({ error: "Invalid camera ID or decision" });
+  }
+
+  // Update the camera's merge decision in the state
+  updateCameraMergeDecision(cameraId, decision);
+
+  res.json({ message: "Merge decision updated successfully" });
 });
 
 app.get("/api/barrier/override-log", (req, res) => {

@@ -16,20 +16,12 @@
     "src": "/videos/low-traffic-street.mp4"
   },
   {
-    "id": "camera-heavy-vehicles",
-    "label": "Commercial Road",
-    "cameraID": "Camera 3 - Commercial Road",
-    "mergeID": "Merge 3",
-    "trafficLevel": "Heavy Vehicles",
-    "src": "/videos/heavy_traffic_realtime.mp4"
-  },
-  {
     "id": "camera-empty-street",
     "label": "Empty Street",
     "cameraID": "Camera 4 - Empty Street",
     "mergeID": "Merge 4",
     "trafficLevel": "None",
-    "src": "/videos/empty_street_realtime.mp4"
+    "src": "/videos/4203566-hd_1280_720_24fps.mp4"
   },
   {
     "id": "camera-mainroad-1",

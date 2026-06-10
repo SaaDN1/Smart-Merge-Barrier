@@ -164,9 +164,9 @@ function SideBar({ activeTab, setActiveTab, user, onLogout }) {
 }
 
 function Overview() {
-  const [framePayload, setFramePayload] = useState({ detections: [] })
-  const [cameraRows, setCameraRows] = useState([])
-  const [barrierStatus, setBarrierStatus] = useState(null)
+   const [framePayload, setFramePayload] = useState({ detections: [] })
+   const [cameraRows, setCameraRows] = useState([])
+   const [barrierStatus, setBarrierStatus] = useState(null)
   const historyRef = useRef([])
   const flowEventsRef = useRef([])
   const speedSamplesRef = useRef([])
@@ -185,35 +185,35 @@ function Overview() {
     history: []
   })
 
-  useEffect(() => {
-    const fetchCameraRows = async () => {
-      try {
-        const payload = await apiJson('/api/db')
-        setCameraRows(Array.isArray(payload) ? payload : [])
-      } catch (error) {
-        console.error('Error loading camera table:', error)
-      }
-    }
+   useEffect(() => {
+     const fetchCameraRows = async () => {
+       try {
+         const payload = await apiJson('/api/db')
+         setCameraRows(Array.isArray(payload) ? payload : [])
+       } catch (error) {
+         console.error('Error loading camera table:', error)
+       }
+     }
 
-    fetchCameraRows()
-    const intervalId = setInterval(fetchCameraRows, 2000)
-    return () => clearInterval(intervalId)
-  }, [])
+     fetchCameraRows()
+     const intervalId = setInterval(fetchCameraRows, 2000)
+     return () => clearInterval(intervalId)
+   }, [])
 
-  useEffect(() => {
-    const fetchBarrierStatus = async () => {
-      try {
-        const payload = await apiJson('/api/barrier')
-        setBarrierStatus(payload)
-      } catch (error) {
-        console.error('Error loading barrier status:', error)
-      }
-    }
+   useEffect(() => {
+     const fetchBarrierStatus = async () => {
+       try {
+         const payload = await apiJson('/api/barrier')
+         setBarrierStatus(payload)
+       } catch (error) {
+         console.error('Error loading barrier status:', error)
+       }
+     }
 
-    fetchBarrierStatus()
-    const intervalId = setInterval(fetchBarrierStatus, 5000)
-    return () => clearInterval(intervalId)
-  }, [])
+     fetchBarrierStatus()
+     const intervalId = setInterval(fetchBarrierStatus, 5000)
+     return () => clearInterval(intervalId)
+   }, [])
 
   useEffect(() => {
     if (framePayload?.barrier) {
@@ -356,7 +356,8 @@ function Overview() {
   const { vehicles, cars, heavy, motos, weightedTraffic, trafficStatus, motionStatus, avgSpeedNorm, flowRate, history } = stats
   const autoMergeDecision = getMergeDecision({ cars, weightedTraffic, motionStatus, flowRate })
   const mergeDecision = barrierStatus?.state || autoMergeDecision
-  const mergeOpen = mergeDecision === 'OPEN'
+  const isInitializing = Boolean(framePayload?.isInitializing);
+  const mergeOpen = !isInitializing && mergeDecision === 'OPEN';
 
   const trafficColor = trafficStatus === 'Heavy'
     ? 'var(--danger)'
@@ -399,12 +400,7 @@ function Overview() {
       motionStatus: cam.motionStatus || 'Insufficient Data',
       flowRate: Number(cam.flowRate) || 0,
       trafficStatus: camTrafficStatus,
-      mergeDecision: barrierStatus?.state || getMergeDecision({
-        cars: camCars,
-        weightedTraffic: camWeighted,
-        motionStatus: cam.motionStatus || 'Insufficient Data',
-        flowRate: Number(cam.flowRate) || 0
-      })
+      mergeDecision: cam.mergeDecision || 'UNKNOWN'
     }
   })
 
@@ -422,7 +418,9 @@ function Overview() {
         <div className="merge-banner-indicator"></div>
         <div className="merge-banner-body">
           <span className="merge-banner-label">MERGE BARRIER</span>
-          <span className="merge-banner-state">{mergeDecision}</span>
+          <span className="merge-banner-state">
+            {isInitializing ? 'INITIALIZING' : mergeDecision}
+          </span>
         </div>
         <div className="merge-banner-reason">
           Mode: {barrierStatus?.mode || 'AUTO'} · Motion: {motionStatus} · Flow: {flowRate}/min · Cars: {cars}/{BARRIER_RULES.cars}

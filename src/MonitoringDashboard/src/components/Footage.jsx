@@ -11,6 +11,7 @@ const FAST_INFERENCE_MS = 220;
 const SLOW_INFERENCE_MS = 420;
 const JPEG_QUALITY = 0.5;
 const ZOOM_SCALE = 2;
+const INITIALIZING_DURATION_MS = 2000;
 const DEFAULT_CAMERA_FEEDS = defaultCameraFeedConfig.map(({ id, label, trafficLevel, src }) => ({
     id,
     label,
@@ -38,6 +39,7 @@ function Footage({ onDetections }) {
     const lastUiUpdateRef = useRef(0);
     const adaptiveCaptureWidthRef = useRef(MAX_CAPTURE_WIDTH);
     const inferenceTimesRef = useRef([]);
+    const initializingStartTimeRef = useRef(null);
     const [cameraFeeds, setCameraFeeds] = useState(DEFAULT_CAMERA_FEEDS);
     const [selectedCameraId, setSelectedCameraId] = useState(DEFAULT_CAMERA_FEEDS[0].id);
     const [activeVideoSrc, setActiveVideoSrc] = useState(DEFAULT_CAMERA_FEEDS[0].src);
@@ -115,6 +117,8 @@ function Footage({ onDetections }) {
 
         if (desiredSrc !== activeVideoSrc) {
             setActiveVideoSrc(desiredSrc);
+            // Reset initializing timer when video source changes
+            initializingStartTimeRef.current = Date.now();
         }
     }, [currentCamera, activeVideoSrc]);
 
@@ -161,22 +165,33 @@ function Footage({ onDetections }) {
     const handleNextCameraClick = (event) => {
         event.stopPropagation();
 
-        if (!cameraFeeds.length) {
-            return;
-        }
+        if (!cameraFeeds.length) return;
 
-        const currentIndex = cameraFeeds.findIndex((feed) => feed.id === currentCameraIdRef.current);
+        const currentIndex = cameraFeeds.findIndex(
+            (feed) => feed.id === currentCameraIdRef.current
+        );
         const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % cameraFeeds.length : 0;
-        setSelectedCameraId(cameraFeeds[nextIndex].id);
+        const nextCameraId = cameraFeeds[nextIndex].id;
+
+        setSelectedCameraId(nextCameraId);
+
+        if (typeof onDetections === "function") {
+            onDetections({
+                detections: [],
+                cameraId: nextCameraId,
+                barrier: {
+                    state: "UNKNOWN",
+                    mode: "AUTO",
+                    reason: "Camera switched"
+                }
+            });
+        }
 
         setSourceNotice("");
         adaptiveCaptureWidthRef.current = MAX_CAPTURE_WIDTH;
         inferenceTimesRef.current = [];
         setIsZoomed(false);
-        setZoomOrigin({ x: 50, y: 50 });
-        if (typeof onDetections === "function") {
-            onDetections({ detections: [] });
-        }
+
         clearOverlay();
     };
 
@@ -224,6 +239,20 @@ function Footage({ onDetections }) {
             ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
             ctx.lineWidth = 3;
             ctx.font = "16px sans-serif";
+
+            // Draw initializing text if within first 2 seconds
+            if (initializingStartTimeRef.current !== null) {
+                const elapsed = Date.now() - initializingStartTimeRef.current;
+                if (elapsed < INITIALIZING_DURATION_MS) {
+                    ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+                    ctx.fillRect(0, 0, overlayCanvas.width, 40);
+
+                    ctx.fillStyle = "#ffffff";
+                    ctx.font = "bold 24px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText("Initializing...", overlayCanvas.width / 2, 30);
+                }
+            }
 
             detections.forEach((det) => {
                 if (!Array.isArray(det?.bbox) || det.bbox.length !== 4) {
@@ -317,6 +346,10 @@ function Footage({ onDetections }) {
 
                 const now = Date.now();
                 if (typeof onDetections === "function" && now - lastUiUpdateRef.current >= UI_UPDATE_INTERVAL_MS) {
+                    const isInitializing =
+                        initializingStartTimeRef.current !== null &&
+                        (Date.now() - initializingStartTimeRef.current) < INITIALIZING_DURATION_MS;
+
                     onDetections({
                         detections,
                         frameWidth: targetWidth,
@@ -324,7 +357,8 @@ function Footage({ onDetections }) {
                         timestamp: now,
                         cameraId: currentCameraIdRef.current,
                         vehicleSummary: payload?.vehicleSummary || null,
-                        barrier: payload?.barrier || null
+                        barrier: payload?.barrier || null,
+                        isInitializing
                     });
                     lastUiUpdateRef.current = now;
                 }

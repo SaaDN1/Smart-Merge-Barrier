@@ -28,6 +28,7 @@ export default function Cameras() {
                 <th>Camera ID</th>
                 <th>Merge ID</th>
                 <th>Car Count</th>
+                <th>Merge Decision</th>
               </tr>
             </thead>
             <tbody>
@@ -36,6 +37,7 @@ export default function Cameras() {
                   <td>{d.cameraID}</td>
                   <td>{d.mergeID}</td>
                   <td>{d.carCount}</td>
+                  <td>{d.mergeDecision}</td>
                 </tr>
               ))}
             </tbody>
