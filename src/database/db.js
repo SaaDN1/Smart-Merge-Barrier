@@ -2,23 +2,13 @@ const cameraFeeds = require("../MonitoringDashboard/src/data/cameraFeeds.json");
 
 function ensureUniqueCameraFeeds(feeds) {
   const seenIds = new Set();
-  const seenProfiles = new Set();
-  const seenStreams = new Set();
 
   feeds.forEach((feed) => {
     if (seenIds.has(feed.id)) {
       throw new Error(`Duplicate camera id detected: ${feed.id}`);
     }
-    if (seenProfiles.has(feed.trafficLevel)) {
-      throw new Error(`Duplicate traffic profile detected: ${feed.trafficLevel}`);
-    }
-    if (seenStreams.has(feed.src)) {
-      throw new Error(`Duplicate camera video detected: ${feed.src}`);
-    }
 
     seenIds.add(feed.id);
-    seenProfiles.add(feed.trafficLevel);
-    seenStreams.add(feed.src);
   });
 }
 

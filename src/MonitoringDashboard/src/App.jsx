@@ -116,7 +116,7 @@ function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Dashboard /*user={auth.user} onLogout={handleLogout}*/ />} />
+        <Route path="/" element={<Dashboard user={auth.user} onLogout={handleLogout} />} />
         <Route path="/cameras" element={<Cameras />} />
         <Route path="/settings" element={<Settings />} />
       </Routes>
