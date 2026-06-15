@@ -16,14 +16,14 @@ const BARRIER_RULES = {
   weighted: 18,
   minFlowForOpen: 2
 }
-const TRACKER_MAX_DISTANCE = 80
-const TRACK_TTL_MS = 2200
+const TRACKER_MAX_DISTANCE = 120
+const TRACK_TTL_MS = 4000
 const FLOW_WINDOW_MS = 60000
-const FLOW_LINE_RATIO = 0.58
+const FLOW_LINE_RATIO = 0.70
 const MOTION_WINDOW_MS = 10000
 const MOTION_RECENT_WINDOW_MS = 3000
 const MOTION_THRESHOLDS = {
-  congested: 0.02,
+  congested: 0.05,
   quick: 0.06,
   congestedFlowMax: 2,
   denseTrafficTracksMin: 8,
@@ -53,7 +53,7 @@ function classifyMotion(avgSpeedNorm, trackedVehicles, flowRate, recentAvgSpeedN
   if (trackedVehicles < 2) return 'Insufficient Data'
 
   const nearStandstill = avgSpeedNorm <= MOTION_THRESHOLDS.congested
-  const recentNearStandstill = recentAvgSpeedNorm <= (MOTION_THRESHOLDS.congested + 0.01)
+  const recentNearStandstill = recentAvgSpeedNorm <= MOTION_THRESHOLDS.congested
   const stalledFlow = trackedVehicles >= 3
     && flowRate <= 1
     && recentAvgSpeedNorm <= 0.045
@@ -276,7 +276,9 @@ function Overview() {
           x: centroid.x,
           y: centroid.y,
           side: nextSide,
-          lastSeenAt: now
+          lastSeenAt: now,
+          seenCount: 1,
+          counted: false
         })
         usedTrackIds.add(newTrackId)
         return
@@ -290,15 +292,23 @@ function Overview() {
         speedSamplesRef.current.push({ ts: now, speedNorm })
       }
 
-      if (existing && existing.side === 'above' && nextSide === 'below') {
+      if (
+        existing &&
+        !existing.counted &&
+        existing.side === 'above' &&
+        nextSide === 'below' &&
+        existing.seenCount >= 4
+      ) {
         flowEventsRef.current.push(now)
+        existing.counted = true
       }
 
       tracks.set(bestTrackId, {
         x: centroid.x,
         y: centroid.y,
         side: nextSide,
-        lastSeenAt: now
+        lastSeenAt: now,
+        seenCount: (existing?.seenCount || 1) + 1
       })
       usedTrackIds.add(bestTrackId)
     })
@@ -315,9 +325,12 @@ function Overview() {
       : localAvgSpeedNorm
     const localMotionStatus = classifyMotion(localAvgSpeedNorm, vehicleDetections.length, localFlowRate, localRecentAvgSpeedNorm)
 
+    flowEventsRef.current = flowEventsRef.current.filter((eventTs) => now - eventTs <= FLOW_WINDOW_MS)
+    const localFlowRateAdjusted = flowEventsRef.current.length * (60000 / FLOW_WINDOW_MS)
+
     const flowRate = Number.isFinite(Number(backendSummary?.flowRate))
       ? Number(backendSummary.flowRate)
-      : localFlowRate
+      : localFlowRateAdjusted
     const avgSpeedNorm = Number.isFinite(Number(backendSummary?.avgSpeedNorm))
       ? Number(backendSummary.avgSpeedNorm)
       : localAvgSpeedNorm

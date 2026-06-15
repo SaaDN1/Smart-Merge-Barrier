@@ -35,13 +35,13 @@ const OPEN_CONFIRM_MS = Number(process.env.OPEN_CONFIRM_MS || 5000); // 5 second
 const CLOSE_CONFIRM_MS = Number(process.env.CLOSE_CONFIRM_MS || 5000); // 5 seconds
 
 const VEHICLE_CLASSES = new Set(["car", "bus", "truck", "motorcycle"]);
-const TRACKER_MAX_DISTANCE = Number(process.env.TRACKER_MAX_DISTANCE || 80);
-const TRACK_TTL_MS = Number(process.env.TRACK_TTL_MS || 2200);
+const TRACKER_MAX_DISTANCE = Number(process.env.TRACKER_MAX_DISTANCE || 120);
+const TRACK_TTL_MS = Number(process.env.TRACK_TTL_MS || 4000);
 const FLOW_WINDOW_MS = Number(process.env.FLOW_WINDOW_MS || 60000);
 const MOTION_WINDOW_MS = Number(process.env.MOTION_WINDOW_MS || 10000);
 const MOTION_RECENT_WINDOW_MS = Number(process.env.MOTION_RECENT_WINDOW_MS || 3000);
-const FLOW_LINE_RATIO = Number(process.env.FLOW_LINE_RATIO || 0.58);
-const MOTION_CONGESTED_THRESHOLD = Number(process.env.MOTION_CONGESTED_THRESHOLD || 0.02);
+const FLOW_LINE_RATIO = Number(process.env.FLOW_LINE_RATIO || 0.70);
+const MOTION_CONGESTED_THRESHOLD = Number(process.env.MOTION_CONGESTED_THRESHOLD || 0.05);
 const MOTION_QUICK_THRESHOLD = Number(process.env.MOTION_QUICK_THRESHOLD || 0.06);
 const CONGESTED_FLOW_MAX_PER_MIN = Number(process.env.CONGESTED_FLOW_MAX_PER_MIN || 2);
 const DENSE_TRAFFIC_TRACKS_MIN = Number(process.env.DENSE_TRAFFIC_TRACKS_MIN || 8);
@@ -379,8 +379,8 @@ function classifyMotion(avgSpeedNorm, trackedVehicles, flowRate, recentAvgSpeedN
   if (trackedVehicles < 2) return "Insufficient Data";
 
   // More relaxed thresholds to prevent false positives
-  const nearStandstill = avgSpeedNorm <= MOTION_CONGESTED_THRESHOLD;
-  const recentNearStandstill = recentAvgSpeedNorm <= (MOTION_CONGESTED_THRESHOLD + 0.01);
+  const nearStandstill = avgSpeedNorm < 0.05;
+  const recentNearStandstill = recentAvgSpeedNorm < 0.05;
 
   // Check for stalled flow with more realistic conditions
   const stalledFlow = trackedVehicles >= 3
@@ -458,13 +458,14 @@ function updateMotionMetrics(cameraKey, detections, frameHeight, now) {
     if (bestTrackId === null) {
       const newTrackId = state.nextId;
       state.nextId += 1;
-      state.tracks.set(newTrackId, {
-        x: centroid.x,
-        y: centroid.y,
-        side: nextSide,
-        lastSeenAt: now,
-        seenCount: 1
-      });
+state.tracks.set(newTrackId, {
+  x: centroid.x,
+  y: centroid.y,
+  side: nextSide,
+  lastSeenAt: now,
+  seenCount: 1,
+  counted: false
+});
       usedTrackIds.add(newTrackId);
       return;
     }
@@ -483,9 +484,16 @@ function updateMotionMetrics(cameraKey, detections, frameHeight, now) {
       }
     }
 
-    if (existing && existing.side === "above" && nextSide === "below") {
-      state.flowEvents.push(now);
-    }
+if (
+  existing &&
+  !existing.counted &&
+  existing.side === "above" &&
+  nextSide === "below" &&
+  existing.seenCount >= 4
+) {
+  state.flowEvents.push(now);
+  existing.counted = true;
+}
 
     state.tracks.set(bestTrackId, {
       x: centroid.x,
@@ -501,7 +509,12 @@ function updateMotionMetrics(cameraKey, detections, frameHeight, now) {
   state.speedSamples = state.speedSamples.filter((sample) => now - sample.ts <= MOTION_WINDOW_MS);
   const recentSpeedSamples = state.speedSamples.filter((sample) => now - sample.ts <= MOTION_RECENT_WINDOW_MS);
 
-  const flowRate = state.flowEvents.length;
+state.flowEvents = state.flowEvents.filter(
+  (eventTs) => now - eventTs <= FLOW_WINDOW_MS
+);
+
+const flowRate =
+  state.flowEvents.length * (60000 / FLOW_WINDOW_MS);
   const avgSpeedNorm = state.speedSamples.length > 0
     ? state.speedSamples.reduce((sum, sample) => sum + sample.speedNorm, 0) / state.speedSamples.length
     : 0;
