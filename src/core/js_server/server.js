@@ -41,7 +41,7 @@ const FLOW_WINDOW_MS = Number(process.env.FLOW_WINDOW_MS || 60000);
 const MOTION_WINDOW_MS = Number(process.env.MOTION_WINDOW_MS || 10000);
 const MOTION_RECENT_WINDOW_MS = Number(process.env.MOTION_RECENT_WINDOW_MS || 3000);
 const FLOW_LINE_RATIO = Number(process.env.FLOW_LINE_RATIO || 0.70);
-const MOTION_CONGESTED_THRESHOLD = Number(process.env.MOTION_CONGESTED_THRESHOLD || 0.05);
+const MOTION_CONGESTED_THRESHOLD = Number(process.env.MOTION_CONGESTED_THRESHOLD || 0.04);
 const MOTION_QUICK_THRESHOLD = Number(process.env.MOTION_QUICK_THRESHOLD || 0.06);
 const CONGESTED_FLOW_MAX_PER_MIN = Number(process.env.CONGESTED_FLOW_MAX_PER_MIN || 2);
 const DENSE_TRAFFIC_TRACKS_MIN = Number(process.env.DENSE_TRAFFIC_TRACKS_MIN || 8);
@@ -377,16 +377,15 @@ function classifyTrafficLevel(totalVehicles) {
 
 function classifyMotion(avgSpeedNorm, trackedVehicles, flowRate, recentAvgSpeedNorm = avgSpeedNorm) {
   if (trackedVehicles < 2) return "Insufficient Data";
+  if (avgSpeedNorm === null) return "Insufficient Data";
 
   // More relaxed thresholds to prevent false positives
-  const nearStandstill = avgSpeedNorm < 0.05;
-  const recentNearStandstill = recentAvgSpeedNorm < 0.05;
-
+  const nearStandstill = avgSpeedNorm < 0.033;
+  const recentNearStandstill = recentAvgSpeedNorm < 0.033;
   // Check for stalled flow with more realistic conditions
-  const stalledFlow = trackedVehicles >= 3
+  const stalledFlow = trackedVehicles >= 5
     && flowRate <= 1
-    && recentAvgSpeedNorm <= 0.045;
-
+    && recentAvgSpeedNorm <= 0.02;
   // Check for dense slow crawl with better thresholds
   const denseSlowCrawl = trackedVehicles >= DENSE_TRAFFIC_TRACKS_MIN
     && flowRate <= CONGESTED_FLOW_MAX_PER_MIN
@@ -455,9 +454,9 @@ function updateMotionMetrics(cameraKey, detections, frameHeight, now) {
 
     const nextSide = centroid.y >= lineY ? "below" : "above";
 
-    if (bestTrackId === null) {
+if (bestTrackId === null) {
       const newTrackId = state.nextId;
-      state.nextId += 1;
+      state.nextId = (state.nextId >= 999999) ? 1 : state.nextId + 1;
 state.tracks.set(newTrackId, {
   x: centroid.x,
   y: centroid.y,
@@ -475,12 +474,15 @@ state.tracks.set(newTrackId, {
       const dtSec = Math.max((now - existing.lastSeenAt) / 1000, 0.001);
       const distancePx = Math.hypot(centroid.x - existing.x, centroid.y - existing.y);
 
-      if (existing.seenCount >= 2 && dtSec >= 0.25) {
+if (existing.seenCount >= 2 && dtSec >= 0.05) {
         const speedNorm = Math.min(
           (distancePx / dtSec) / Math.max(frameHeight, 1),
           0.35
         );
         state.speedSamples.push({ ts: now, speedNorm });
+        if (state.speedSamples.length > 500) {
+            state.speedSamples = state.speedSamples.slice(-500);
+        }
       }
     }
 
@@ -509,15 +511,11 @@ if (
   state.speedSamples = state.speedSamples.filter((sample) => now - sample.ts <= MOTION_WINDOW_MS);
   const recentSpeedSamples = state.speedSamples.filter((sample) => now - sample.ts <= MOTION_RECENT_WINDOW_MS);
 
-state.flowEvents = state.flowEvents.filter(
-  (eventTs) => now - eventTs <= FLOW_WINDOW_MS
-);
-
 const flowRate =
   state.flowEvents.length * (60000 / FLOW_WINDOW_MS);
-  const avgSpeedNorm = state.speedSamples.length > 0
-    ? state.speedSamples.reduce((sum, sample) => sum + sample.speedNorm, 0) / state.speedSamples.length
-    : 0;
+const avgSpeedNorm = state.speedSamples.length > 0
+  ? state.speedSamples.reduce((sum, sample) => sum + sample.speedNorm, 0) / state.speedSamples.length
+  : null;
   const recentAvgSpeedNorm = recentSpeedSamples.length > 0
     ? recentSpeedSamples.reduce((sum, sample) => sum + sample.speedNorm, 0) / recentSpeedSamples.length
     : avgSpeedNorm;
@@ -552,15 +550,17 @@ function computeBarrierStatus() {
   } else {
     const motionStatus = latestTrafficSnapshot.motionStatus;
     const flowRate = Number(latestTrafficSnapshot.flowRate) || 0;
-    const noReliableData = motionStatus === "Insufficient Data" || totalCars === 0;
+const noReliableData = motionStatus === "Insufficient Data" || motionStatus === null || totalCars === 0;
 
     if (noReliableData) {
       state = "OPEN";
       mode = "AUTO";
       reason = "Insufficient data / empty street";
+      pendingBarrierState = null;
+      pendingBarrierSince = null;
     } else {
       const notCongested = motionStatus !== "Congested";
-      const hasGoodFlow = motionStatus === "Quick Flow" || flowRate >= FLOW_GOOD_MIN_PER_MIN;
+const hasGoodFlow = motionStatus === "Quick Flow" || motionStatus === "Steady Flow" || flowRate >= FLOW_GOOD_MIN_PER_MIN;
 
       let desiredState;
       if (notCongested && hasGoodFlow) {
@@ -811,10 +811,12 @@ app.post("/api/ai", async (req, res) => {
     const now = Date.now();
 const cameraKey = typeof cameraId === "string" && cameraId.trim() ? cameraId.trim() : "camera-main";
 
-    if (cameraKey !== lastActiveCameraId) {
+if (cameraKey !== lastActiveCameraId) {
+        if (lastActiveCameraId !== null) {
+            cameraMotionState.delete(lastActiveCameraId);
+        }
         lastActiveCameraId = cameraKey;
         resetBarrierState();
-        cameraMotionState.delete(cameraKey);
     }
 
     const motion = updateMotionMetrics(cameraKey, detections, Number(height) || 1, now);
@@ -831,8 +833,8 @@ const cameraKey = typeof cameraId === "string" && cameraId.trim() ? cameraId.tri
       totalVehicles,
       flowRate,
       motionStatus: motion.motionStatus,
-      avgSpeedNorm: Number(motion.avgSpeedNorm.toFixed(4)),
-      recentAvgSpeedNorm: Number(motion.recentAvgSpeedNorm.toFixed(4)),
+      jsavgSpeedNorm: motion.avgSpeedNorm !== null ? Number(motion.avgSpeedNorm.toFixed(4)) : null,
+      recentAvgSpeedNorm: motion.recentAvgSpeedNorm !== null ? Number(motion.recentAvgSpeedNorm.toFixed(4)) : null,
       updatedAt: new Date().toISOString()
     };
 
