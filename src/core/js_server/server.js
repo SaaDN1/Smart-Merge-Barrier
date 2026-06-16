@@ -4,7 +4,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { getCameraData, updateCarCount } = require("../../database/db");
+const { getCameraData, updateCarCount, updateCameraMetrics } = require("../../database/db");
 
 const app = express();
 app.use(cors());
@@ -699,26 +699,27 @@ app.post("/api/auth/logout", (req, res) => {
 
 // EXISTING ENDPOINTS
 // Main data for dashboard (camera list + counts)
-app.get("/api/db", (req, res) => {
-  const data = normalizeCameraRows();
-  const barrier = computeBarrierStatus();
+  app.get("/api/db", (req, res) => {
+    const data = normalizeCameraRows();
+    const barrier = computeBarrierStatus();
 
-  const payload = data.map((cam, index) => {
-    // Each camera should have its own merge decision that persists independently
-    // For each camera, we should determine its own merge decision based on its own data
-    
-    const cameraState = cameraStates.get(cam.cameraID) || {
-      mergeDecision: "UNKNOWN",
-      lastUpdated: null
-    };
+    const payload = data.map((cam, index) => {
+      // Each camera should have its own merge decision that persists independently
+      // For each camera, we should determine its own merge decision based on its own data
+      
+      const cameraState = cameraStates.get(cam.cameraID) || {
+        mergeDecision: "UNKNOWN",
+        lastUpdated: null
+      };
 
-    // Use the global barrier state to influence individual camera decisions
-    // but maintain separate states for each camera
-    const cars = cam.carCount || 0;
-    const heavy = cam.buses + cam.trucks || 0;
-    const motorcycles = cam.motorcycles || 0;
-    const totalVehicles = cars + heavy + motorcycles;
-    const weightedTraffic = cars + heavy * 1.5 + motorcycles * 0.5;
+      // Use the global barrier state to influence individual camera decisions
+      // but maintain separate states for each camera
+const isActiveCamera = cam.cameraID === lastActiveCameraId;
+const cars = cam.carCount || 0;
+const heavy = (cam.buses || 0) + (cam.trucks || 0);
+const motorcycles = cam.motorcycles || 0;
+const totalVehicles = cam.totalVehicles || (cars + heavy + motorcycles);
+const weightedTraffic = cam.weightedTraffic || (cars + heavy * 1.5 + motorcycles * 0.5);
 
     // Determine merge decision based on camera-specific data
     let mergeDecision = cameraState.mergeDecision;
@@ -742,10 +743,12 @@ app.get("/api/db", (req, res) => {
       heavy,
       motorcycles,
       vehicles: totalVehicles,
-      weightedTraffic,
-      flowRate: latestTrafficSnapshot.flowRate,
-      motionStatus: latestTrafficSnapshot.motionStatus,
-      trafficStatus: classifyTrafficLevel(totalVehicles),
+       weightedTraffic,
+       jsflowRate: cam.flowRate || 0,
+       motionStatus: cam.motionStatus || 'Insufficient Data',
+ trafficStatus: isActiveCamera
+   ? (latestTrafficSnapshot.motionStatus || "Insufficient Data")
+   : (cameraState.motionStatus || classifyTrafficLevel(totalVehicles)),
       mergeDecision: mergeDecision,
       lastUpdated: cameraState.lastUpdated,
       streamUrl: cam.streamUrl,
@@ -842,15 +845,28 @@ const cameras = normalizeCameraRows();
     let selectedCamera = null;
     if (cameras.length > 0) {
       selectedCamera = cameras.find((cam) => cam.id === cameraId || cam.cameraID === cameraId) || cameras[0];
-      updateCarCount(selectedCamera.cameraID, carCount);
+updateCameraMetrics(selectedCamera.cameraID, {
+        carCount,
+        buses: busCount,
+        trucks: truckCount,
+        motorcycles: motorcycleCount,
+        weightedTraffic: latestTrafficSnapshot.weightedTraffic,
+        totalVehicles,
+        flowRate: latestTrafficSnapshot.flowRate,
+        motionStatus: latestTrafficSnapshot.motionStatus
+      });
     }
 
     const barrierResult = computeBarrierStatus();
 
-    if (selectedCamera && (barrierResult.state === "OPEN" || barrierResult.state === "CLOSED")) {
+if (selectedCamera) {
       const camState = cameraStates.get(selectedCamera.cameraID) || { mergeDecision: "UNKNOWN", lastUpdated: null, initializationTime: null };
-      camState.mergeDecision = barrierResult.state;
+      if (barrierResult.state === "OPEN" || barrierResult.state === "CLOSED") {
+        camState.mergeDecision = barrierResult.state;
+      }
       camState.lastUpdated = new Date().toISOString();
+      camState.motionStatus = motion.motionStatus;
+      camState.totalVehicles = totalVehicles;
       cameraStates.set(selectedCamera.cameraID, camState);
     }
 

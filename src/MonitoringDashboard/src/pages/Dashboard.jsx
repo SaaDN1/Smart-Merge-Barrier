@@ -531,14 +531,14 @@ function Overview() {
                 </thead>
                 <tbody>
                   {cameraData.map((d, i) => {
-                    const statusColor = d.trafficStatus === 'Heavy' ? 'var(--danger)' : d.trafficStatus === 'Moderate' ? '#ffd166' : 'var(--accent)'
+const statusColor = d.motionStatus === 'Congested' ? 'var(--danger)' : d.motionStatus === 'Quick Flow' ? 'var(--accent)' : '#ffd166'
                     const decisionColor = d.mergeDecision === 'OPEN' ? 'var(--accent)' : 'var(--danger)'
                     return (
                       <tr key={`${d.cameraID}-${i}`}>
                         <td>{d.cameraID}</td>
                         <td>{d.mergeID}</td>
                         <td>{d.vehicles}</td>
-                        <td><span style={{ color: statusColor, fontWeight: 600 }}>{d.trafficStatus}</span></td>
+<td><span style={{ color: statusColor, fontWeight: 600 }}>{d.motionStatus}</span></td>
                         <td><span style={{ color: decisionColor, fontWeight: 700 }}>{d.mergeDecision}</span></td>
                       </tr>
                     )

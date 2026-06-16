@@ -28,18 +28,24 @@ export default function Cameras() {
                 <th>Camera ID</th>
                 <th>Merge ID</th>
                 <th>Car Count</th>
+                <th>Traffic Status</th>
                 <th>Merge Decision</th>
               </tr>
             </thead>
             <tbody>
-              {data.map((d, i) => (
-                <tr key={i}>
-                  <td>{d.cameraID}</td>
-                  <td>{d.mergeID}</td>
-                  <td>{d.carCount}</td>
-                  <td>{d.mergeDecision}</td>
-                </tr>
-              ))}
+              {data.map((d, i) => {
+                // Define color mapping to match main dashboard
+                const statusColor = d.trafficStatus === 'Heavy' ? 'var(--danger)' : d.trafficStatus === 'Moderate' ? '#ffd166' : 'var(--accent)'
+                return (
+                  <tr key={i}>
+                    <td>{d.cameraID}</td>
+                    <td>{d.mergeID}</td>
+                    <td>{d.carCount}</td>
+                    <td><span style={{ color: statusColor, fontWeight: 600 }}>{d.trafficStatus}</span></td>
+                    <td>{d.mergeDecision}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}
