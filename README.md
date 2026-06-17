@@ -8,30 +8,28 @@ Core Backend Server – Exposes API endpoints (/api/db, /api/ai)
 
 Monitoring Dashboard – React frontend that displays live traffic and camera data
 
+🐍 Running the AI model (python YOLO11m)
+
+Open terminal:
+cd src/core/py_server
+pip install -r requirements.txt
+uvicorn main:app --reload
+
 🚀 Running the Backend Server
 
 Open terminal:
 
-cd src/core
-npm install
-node server.js
+cd src/core/js_server
+npm i
+npm start
 
-
-Server runs at:
-
-http://localhost:5000
-
-
-Health endpoint:
-
-http://localhost:5000/
 
 🖥️ Running the Monitoring Dashboard
 
 Open another terminal:
 
 cd src/MonitoringDashboard
-npm install
+npm i
 npm run dev
 
 
